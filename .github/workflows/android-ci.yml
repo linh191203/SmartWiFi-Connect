@@ -74,7 +74,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: build-and-test
-
+    continue-on-error: true
+    
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
