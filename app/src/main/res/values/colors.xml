@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brandPrimary">#0B6E4F</color>
+    <color name="brandPrimaryDark">#074C37</color>
+    <color name="brandSecondary">#D9F4EC</color>
+    <color name="surfaceColor">#F4F8F7</color>
+    <color name="cardColor">#FFFFFFFF</color>
+    <color name="cardStrokeColor">#CFE5DE</color>
+    <color name="textPrimary">#12231D</color>
+    <color name="textSecondary">#4A645A</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

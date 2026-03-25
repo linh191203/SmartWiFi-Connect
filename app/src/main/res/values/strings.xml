@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">SmartWiFi Connect</string>
+    <string name="status_ready">San sang quet OCR WiFi</string>
+    <string name="title_app">SmartWiFi Connect</string>
+    <string name="subtitle_app">Quet thong tin WiFi bang camera OCR, parse API, va xac nhan truoc khi dung.</string>
+    <string name="hint_api_base_url">API Base URL</string>
+    <string name="hint_ocr_text">OCR Text</string>
+    <string name="hint_ssid">Ten WiFi (SSID)</string>
+    <string name="hint_password">Mat khau</string>
+    <string name="action_check_api">Kiem tra API</string>
+    <string name="action_capture_ocr">Chup OCR</string>
+    <string name="action_parse_wifi">Parse thong tin WiFi</string>
+    <string name="action_copy_password">Sao chep mat khau</string>
+    <string name="status_source_empty">Nguon parse: chua co</string>
+    <string name="status_source_format">Nguon parse: %1$s</string>
+    <string name="status_confidence_empty">Do tin cay: chua co</string>
+    <string name="status_confidence_value">Do tin cay: %1$d%%</string>
+    <string name="toast_ocr_failed">OCR that bai: %1$s</string>
+    <string name="toast_password_empty">Chua co mat khau de sao chep</string>
+    <string name="toast_password_copied">Da sao chep mat khau</string>
+    <string name="cd_loading">Dang xu ly, vui long doi</string>
+</resources>
