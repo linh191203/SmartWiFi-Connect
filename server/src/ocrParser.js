@@ -79,6 +79,61 @@ function extractFromLabeledLines(lines) {
   };
 }
 
+function stripPasswordPrefix(text) {
+  return String(text || "")
+    .replace(/^(password|pass|pass\s*word|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*/i, "")
+    .trim();
+}
+
+function isWifiHeaderLine(text) {
+  const normalized = String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+  return normalized === "wifi" || normalized === "wifiname";
+}
+
+function extractTwoLineSsidPassword(lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return null;
+
+  const sanitizedLines = [...lines].map((line) => String(line || "").trim()).filter(Boolean);
+  while (sanitizedLines.length > 0 && isWifiHeaderLine(sanitizedLines[0])) {
+    sanitizedLines.shift();
+  }
+
+  if (sanitizedLines.length === 0) return null;
+
+  const first = sanitizedLines[0];
+  const second = sanitizedLines[1] || "";
+
+  if (!first) return null;
+
+  if (sanitizedLines.length === 1) {
+    return {
+      ssid: null,
+      password: stripPasswordPrefix(first) || first,
+      sourceFormat: "single_line_password",
+      confidence: 0.9,
+    };
+  }
+
+  const normalizedPassword = stripPasswordPrefix(second) || second;
+  if (!normalizedPassword) {
+    return {
+      ssid: first,
+      password: null,
+      sourceFormat: "two_line_ssid_password",
+      confidence: 0.72,
+    };
+  }
+
+  return {
+    ssid: first,
+    password: normalizedPassword,
+    sourceFormat: "two_line_ssid_password",
+    confidence: 0.93,
+  };
+}
+
 function looksLikePassword(text) {
   if (!text) return false;
   if (text.length < 8) return false;
@@ -97,9 +152,9 @@ function extractHeuristic(lines) {
     const only = filtered[0];
     return {
       ssid: null,
-      password: looksLikePassword(only) ? only : null,
+      password: only,
       sourceFormat: "single_line",
-      confidence: looksLikePassword(only) ? 0.72 : 0.4,
+      confidence: 0.7,
     };
   }
 
@@ -146,6 +201,17 @@ function parseOcrWifiData(ocrText) {
   }
 
   const lines = normalizeText(raw);
+
+  const twoLine = extractTwoLineSsidPassword(lines);
+  if (twoLine) {
+    return {
+      ok: true,
+      data: {
+        ...twoLine,
+        passwordOnly: Boolean(twoLine.password && !twoLine.ssid),
+      },
+    };
+  }
 
   const labeled = extractFromLabeledLines(lines);
   if (labeled) {

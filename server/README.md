@@ -1,6 +1,10 @@
 # SmartWiFiConnect Server (Basic)
 
-Backend API co ban de nhan OCR text tu app Android va parse thong tin WiFi (SSID/password).
+Neu ban moi setup du an lan dau, hay doc README goc truoc:
+
+- ../README.md
+
+Backend API toi gian de nhan OCR text tu app Android, parse thong tin WiFi (SSID/password), va validate du lieu ket noi.
 
 ## 1) Cai dat
 
@@ -54,15 +58,34 @@ Response (vi du):
 }
 ```
 
-### POST `/api/v1/wifi/connect-intent`
-Tao payload goi y cho Android khi can tao QR hoac intent ket noi.
+### POST `/api/ai/validate`
+Danh gia chat luong du lieu WiFi de app co the uu tien tu dong ket noi hoac yeu cau nguoi dung kiem tra lai.
 
 Request body:
 
 ```json
 {
-  "ssid": "MyHome",
-  "password": "12345678"
+  "ssid": "OfficeNet",
+  "password": "A1b2c3d4",
+  "ocrText": "Ten WiFi: OfficeNet\nMat khau: A1b2c3d4"
+}
+```
+
+Response (vi du):
+
+```json
+{
+  "ok": true,
+  "data": {
+    "validated": true,
+    "confidence": 0.88,
+    "suggestion": "Du lieu WiFi co do tin cay tot, co the uu tien tu dong ket noi.",
+    "flags": [],
+    "normalizedSsid": "OfficeNet",
+    "normalizedPassword": "A1b2c3d4",
+    "parseRecommendation": "connect",
+    "shouldAutoConnect": true
+  }
 }
 ```
 
@@ -71,7 +94,8 @@ Request body:
 Tao file `.env` tu `.env.example` neu can:
 
 - `PORT`: cong server (mac dinh 8080)
-- `ALLOWED_ORIGIN`: CORS origin (mac dinh `*`)
+- `ALLOWED_ORIGINS`: danh sach origin cho phep, cach nhau boi dau phay (vi du `https://app.example.com,https://admin.example.com`)
+- `ALLOWED_ORIGIN`: bien cu, van duoc ho tro tuong thich nguoc
 
 ## 5) Test nhanh voi curl
 

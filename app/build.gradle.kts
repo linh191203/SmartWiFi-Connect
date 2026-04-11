@@ -69,7 +69,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.kotlinx.coroutines.play.services)
-    debugImplementation(libs.okhttp.logging.interceptor)
+    implementation(libs.okhttp.logging.interceptor)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
