@@ -95,6 +95,10 @@ app.use((_req, res) => {
   res.status(404).json({ ok: false, error: "Endpoint not found" });
 });
 
-app.listen(port, () => {
-  console.log(`[SmartWiFiConnect] API running on http://localhost:${port}`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`[SmartWiFiConnect] API running on http://localhost:${port}`);
+  });
+}
+
+module.exports = app;
