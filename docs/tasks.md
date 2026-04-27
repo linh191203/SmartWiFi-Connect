@@ -8,116 +8,33 @@
 
 ---
 
-## Sprint 1
-### FE
-- [x] Tạo project Android Studio
-- [x] Tạo Git repo + GitHub
-- [x] Tạo package structure
-- [x] Tạo docs nội bộ
-- [ ] Cấu hình CI/CD cơ bản
-- [ ] Cài thư viện chính
-- [ ] Thiết kế wireframe UI
-- [ ] Viết test đầu tiên
-
-### BE
-- [x] Thiết lập server cơ bản
-- [ ] Khởi tạo DB
-- [x] Tạo `/api/health`
-- [x] Tạo `/api/ai/validate` dummy
-- [x] Viết unit test `GET /api/health` → 2 passed ✅
-
----
-
-## Sprint 2
-### FE
-- [x] Tạo HomeScreen
-- [x] Tạo OnboardingScreen
-- [x] Tạo LoginScreen (Compose)
-- [x] Tạo RegisterScreen (Compose)
-- [x] Tinh chỉnh Login UI theo design (social icon + typography + spacing)
-- [x] Tạo Permission flow
-- [x] Tạo camera/photo UI
-- [x] Hoàn thiện OCR mock flow để demo FE
-- [x] Tích hợp OCR bằng ML Kit
-- [x] Nối parse OCR với backend từ OCR Result
-- [x] Fix crash camera permission khi mở OCR từ màn scan
-- [x] Test mock API integration cho FE (MockWebServer + instrumentation)
-
-### BE
-- [ ] Hoàn thiện `/api/ai/validate` dummy
-- [ ] Trả JSON mẫu
-- [ ] Viết unit test backend
-
----
-
-## Sprint 3
-### FE
-- [x] Gợi ý SSID gần đúng
+## Web Frontend (React)
+- [x] Tạo project React + Vite
+- [x] Tạo các màn hình: Home, Onboarding, Login, Register
+- [x] Tạo các màn hình: QrScanner, ScanImage, ManualEntry
+- [x] Tạo ReviewScreen
+- [x] Tạo HistoryScreen
+- [x] Tạo SettingsScreen
+- [x] Lưu lịch sử bằng localStorage
 - [ ] Gọi API `/api/ai/validate`
-- [ ] Tạo ReviewScreen
-- [ ] Lưu local bằng Room
-- [ ] Kiểm thử tích hợp
-
-### BE
-- [ ] Tích hợp AI backend hoặc mock nâng cao
-- [ ] Unit test `/api/ai/validate`
-- [ ] Sửa lỗi tích hợp
-
----
-
-## Sprint 4
-### FE
-- [ ] Kết nối Wi-Fi thật trên Android
 - [ ] Xử lý loading/success/error/timeout
-- [ ] Gọi API save network
-- [ ] Lưu local history bằng Room
-- [ ] Tạo HistoryScreen
-- [ ] Test manual flow kết nối và lưu
+- [ ] Gọi API `POST /api/networks` để lưu mạng
+- [ ] Unit test / integration test
 
-### BE
-- [ ] Tạo `POST /api/networks`
-- [ ] Lưu DB
+## Backend (Node.js)
+- [x] Tạo server cơ bản
+- [x] `GET /api/health`
+- [x] `POST /api/ai/validate` dummy
+- [ ] Hoàn thiện `/api/ai/validate`
+- [ ] `POST /api/networks` — lưu DB
 - [ ] Mã hóa password trước khi lưu
-- [ ] Unit test API save network
-
----
-
-## Sprint 5
-### FE
-- [ ] Unit test xử lý kết nối
-- [ ] Unit test lưu local
-- [ ] Integration / E2E test
-- [ ] Tối ưu OCR
-- [ ] Tối ưu UI/UX
-- [ ] Fix bug từ test
-
-### BE
-- [ ] Test validate dữ liệu
-- [ ] Tối ưu timeout/fallback AI
-- [ ] Refactor backend
-- [ ] Update API docs
-- [ ] Fix bug từ test
-
----
-
-## Sprint 6
-### FE
-- [ ] Hoàn thiện CI/CD
-- [ ] Build APK release
-- [ ] Cấu hình version/release
-- [ ] Viết hướng dẫn sử dụng
-- [ ] Chuẩn bị demo
-- [ ] Fix bug cuối
-
-### BE
+- [ ] Unit test các endpoint
 - [ ] Deploy backend
-- [ ] Swagger/Postman
-- [ ] Check endpoint demo
-- [ ] Fix bug cuối
 
-### Cả nhóm
-- [ ] Test end-to-end cuối
-- [ ] Final testing
+## Chung
+- [ ] Test end-to-end
+- [ ] Swagger / Postman docs
+- [ ] Chuẩn bị demo
 - [ ] Release sprint cuối
 
 ---

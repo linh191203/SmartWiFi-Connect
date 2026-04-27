@@ -1,53 +1,17 @@
 # Memory - SmartWiFi-Connect
 
 ## Trạng thái hiện tại
-- Đã khởi tạo project Android
-- Đã tạo package structure
-- Đã tạo bộ docs `.md`
-- Đang chuẩn hóa package `com.smartwificonnect`
-- Đã có AppTheme + Navigation skeleton + HomeScreen
-- Đã có SplashScreen (Compose) + OnboardingScreen (Compose)
-- Đã có LoginScreen (Compose)
-- Đã có RegisterScreen (Compose)
-- Đã redesign HomeScreen theo style mềm/bo tròn, bám bản HTML W2
-- Luồng hiện tại chạy: Splash -> Onboarding -> (Login hoặc Home) -> Register -> Home
-- Đã có OCR flow thực tế: Gallery/Camera -> ML Kit OCR -> OCR Result -> Parse qua BE
-- Đã fix crash runtime permission camera khi bấm chụp ở OCR flow
-- Đã có bộ Mock API integration test cho FE parse OCR
-
----
+- Stack: React + Vite + React Router (frontend), Node.js + Express (backend)
+- Lịch sử scan và mạng đã lưu dùng `localStorage`
+- OCR parse gọi backend `/api/v1/ocr/parse`
+- Đã có đủ các màn hình: Home, Onboarding, Login, Register, QR, OCR, Manual, Review, History, Settings
 
 ## Đã chốt
-- Stack:
-    - Kotlin
-    - Jetpack Compose
-    - Material 3
-    - CameraX
-    - ML Kit
-    - Room
-    - Navigation Compose
-- Flow chính:
-  Splash → Onboarding → Home → (QR / OCR / Manual) → Review → Save/Connect → History
-- QR scanner là màn camera thật, không phải mock trắng đục
-- OCR screen là màn riêng
-- Review screen là điểm hợp nhất dữ liệu
+- Flow chính: Onboarding → Login → Home → (QR / OCR / Manual) → Review → Save → History
 - Không làm crack / brute force / bypass Wi-Fi
 
----
-
 ## Điều chỉnh từ plan cũ
-- Không dùng React Native
-- Không dùng AsyncStorage
-- Không dùng wifi-reborn làm trung tâm
-- Chuyển toàn bộ theo native Android + Room + Wi-Fi API phù hợp
-
----
-
-## Đang làm dở
-- [ ] Sửa package name
-- [x] Tạo `ui/components`
-- [x] Tạo AppTheme
-- [x] Tạo Navigation skeleton
+- Đã chuyển từ native Android (Kotlin/Compose) sang React web app
 - [x] Tạo HomeScreen đầu tiên
 - [x] Tạo OnboardingScreen
 - [x] Tạo LoginScreen

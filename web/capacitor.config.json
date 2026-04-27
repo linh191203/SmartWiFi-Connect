@@ -1,0 +1,27 @@
+{
+  "appId": "com.smartwificonnect.app",
+  "appName": "WiFi Connect",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0
+    }
+  },
+  "ios": {
+    "contentInset": "automatic"
+  },
+  "android": {
+    "buildOptions": {
+      "keystorePath": null,
+      "keystorePassword": null,
+      "keystoreAlias": null,
+      "keystoreAliasPassword": null,
+      "signingMethod": "jarsigner",
+      "androidGradleRepositoryUrl": "https://repo.gradle.org/gradle/gradle-releases"
+    }
+  }
+}

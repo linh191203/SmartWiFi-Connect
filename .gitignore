@@ -1,18 +1,13 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+# OS
 .DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
+*.log
+hs_err_pid*
 
+# Node
 /server/node_modules
 /server/.env
+
+# Web
+/web/node_modules
+/web/dist
+/web/.vite

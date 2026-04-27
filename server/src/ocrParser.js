@@ -50,8 +50,8 @@ function parseWifiQrFormat(raw) {
 
 function extractFromLabeledLines(lines) {
   const labels = {
-    ssid: /(ssid|wifi\s*name|network\s*name|ten\s*wifi|t[eê]n\s*m[aạ]ng)/i,
-    password: /(password|pass\s*word|pass|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)/i,
+    ssid: /(ssid|wifi(?:\s*name)?|network\s*name|ten\s*wifi|t[eê]n\s*m[aạ]ng)/i,
+    password: /(password|pass\s*word|pass|mat\s*khau|m[aậạ]t\s*kh[aẩ]u|mk)/i,
   };
 
   let ssid = null;
@@ -81,7 +81,7 @@ function extractFromLabeledLines(lines) {
 
 function stripPasswordPrefix(text) {
   return String(text || "")
-    .replace(/^(password|pass|pass\s*word|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*/i, "")
+    .replace(/^(password|pass|pass\s*word|mat\s*khau|m[aậạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*/i, "")
     .trim();
 }
 
@@ -202,6 +202,20 @@ function parseOcrWifiData(ocrText) {
 
   const lines = normalizeText(raw);
 
+  // Prefer labeled extraction only when a labeled SSID was found (has value after delimiter).
+  // If labeled only found a password (header-only SSID line like "WiFi" with no value),
+  // fall through to two-line extraction which handles SSID-on-next-line patterns.
+  const labeled = extractFromLabeledLines(lines);
+  if (labeled?.ssid) {
+    return {
+      ok: true,
+      data: {
+        ...labeled,
+        passwordOnly: false,
+      },
+    };
+  }
+
   const twoLine = extractTwoLineSsidPassword(lines);
   if (twoLine) {
     return {
@@ -213,7 +227,7 @@ function parseOcrWifiData(ocrText) {
     };
   }
 
-  const labeled = extractFromLabeledLines(lines);
+  // Labeled found only a password (no ssid) — still useful
   if (labeled) {
     return {
       ok: true,

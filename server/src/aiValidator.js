@@ -19,7 +19,7 @@ function hasSsidLabel(value) {
 
 function stripPasswordLabel(value) {
   return normalizeWhitespace(value).replace(
-    /^(password|pass\s*word|pass|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*/i,
+    /^(password|pass\s*word|pass|mat\s*khau|m[aậạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*/i,
     "",
   );
 }

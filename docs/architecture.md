@@ -1,98 +1,29 @@
 # Architecture - SmartWiFi-Connect
 
 ## Kiến trúc tổng thể
-- UI Layer
-- Domain Layer
-- Data Layer
+- Web Frontend (`web/`) — React + Vite
+- Backend (`server/`) — Node.js + Express
 
-## Package structure
-com.smartwificonnect
-- ui
-- ui.theme
-- navigation
-- feature.home
-- feature.scanqr
-- feature.scanimage
-- feature.review
-- feature.history
-- feature.settings
-- data
-- domain
-- core
+## Cấu trúc frontend (`web/src/`)
+```
+pages/        — màn hình chính (HomeScreen, HistoryScreen, ...)
+components/   — component dùng chung (NetworkCard, EmptyState)
+context/      — global state (AppState)
+lib/          — logic phụ trợ (api.js, format.js, storage.js, wifiRepository.js)
+```
 
-## Vai trò từng package
-### ui
-Component dùng chung:
-- button
-- card
-- loading
-- empty state
-- error state
+## Cấu trúc backend (`server/src/`)
+```
+index.js       — Express app, routes
+oiParser.js    — parse kết quả OCR
+aiValidator.js — validate SSID/password
+```
 
-### ui.theme
-- color
-- typography
-- theme
-- shape
+## Luồng dữ liệu
+User action → Page component → lib/api.js → Backend API → Response → UI update
 
-### navigation
-- routes
-- nav graph
-- app nav host
-
-### feature.home
-- HomeScreen
-- HomeUiState
-- HomePreviewData
-
-### feature.scanqr
-- QrScannerScreen
-- QrScannerUiState
-
-### feature.scanimage
-- ImageScanScreen
-- ImageScanUiState
-
-### feature.review
-- ReviewScreen
-- ReviewUiState
-
-### feature.history
-- HistoryScreen
-- HistoryDetailScreen
-
-### feature.settings
-- SettingsScreen
-
-### data
-- repository impl
-- local db
-- dao
-- entity
-
-### domain
-- repository interface
-- model
-- use case
-- parser
-
-### core
-- constants
-- utils
-- extensions
-
-## Luồng dữ liệu cơ bản
-User action
-→ Screen
-→ ViewModel
-→ UseCase
-→ Repository
-→ Data source
-→ Result
-→ UI state
-
-## Quy tắc tách file
-- Mỗi màn hình 1 file chính
-- Không để business logic trong composable
-- Không để ViewModel gọi UI component
-- Không để parser nằm trong UI layer
+## Quy tắc
+- Mỗi màn hình 1 file trong `pages/`
+- Logic gọi API tập trung trong `lib/api.js`
+- State lịch sử và mạng đã lưu qua `localStorage` (wifiRepository.js)
+- Không để business logic trực tiếp trong JSX component

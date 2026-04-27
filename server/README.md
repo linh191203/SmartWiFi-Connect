@@ -97,6 +97,10 @@ Tao file `.env` tu `.env.example` neu can:
 - `ALLOWED_ORIGINS`: danh sach origin cho phep, cach nhau boi dau phay (vi du `https://app.example.com,https://admin.example.com`)
 - `ALLOWED_ORIGIN`: bien cu, van duoc ho tro tuong thich nguoc
 
+Neu chay frontend React moi trong repo, hay them:
+
+- `http://localhost:5173`
+
 ## 5) Test nhanh voi curl
 
 ```bash

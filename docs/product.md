@@ -1,7 +1,7 @@
 # Product - SmartWiFi-Connect
 
 ## Mục tiêu sản phẩm
-Ứng dụng Android giúp người dùng kết nối Wi-Fi nhanh hơn bằng:
+Web app giúp người dùng kết nối Wi-Fi nhanh hơn bằng:
 - quét mã QR Wi-Fi
 - quét ảnh chứa tên Wi-Fi và mật khẩu bằng OCR
 - nhập tay nếu cần
