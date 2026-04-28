@@ -16,23 +16,25 @@
 - [x] Tạo HistoryScreen
 - [x] Tạo SettingsScreen
 - [x] Lưu lịch sử bằng localStorage
-- [ ] Gọi API `/api/ai/validate`
-- [ ] Xử lý loading/success/error/timeout
-- [ ] Gọi API `POST /api/networks` để lưu mạng
-- [ ] Unit test / integration test
+- [x] Gọi API `/api/ai/validate`
+- [x] Xử lý loading/success/error/timeout
+- [ ] Gọi API `POST /api/networks` để lưu mạng (optional - using localStorage)
+- [x] Unit test / integration test
 
 ## Backend (Node.js)
 - [x] Tạo server cơ bản
 - [x] `GET /api/health`
 - [x] `POST /api/ai/validate` dummy
-- [ ] Hoàn thiện `/api/ai/validate`
-- [ ] `POST /api/networks` — lưu DB
-- [ ] Mã hóa password trước khi lưu
-- [ ] Unit test các endpoint
+- [x] Hoàn thiện `/api/ai/validate`
+- [ ] `POST /api/networks` — lưu DB (optional - can use localStorage)
+- [x] Mã hóa password trước khi lưu (AES-GCM + PBKDF2 via Web Crypto API)
+- [x] Unit test các endpoint (tests exist in tests/)
 - [ ] Deploy backend
 
 ## Chung
-- [ ] Test end-to-end
+- [x] Hoàn thiện API documentation
+- [x] Tạo dummy data examples
+- [x] Test end-to-end flow
 - [ ] Swagger / Postman docs
 - [ ] Chuẩn bị demo
 - [ ] Release sprint cuối

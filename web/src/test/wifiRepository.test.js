@@ -76,12 +76,12 @@ describe("wifiRepository", () => {
     });
 
     it("deduplicates by SSID (keeps latest)", async () => {
-      await repo.saveConnectedWifi({ ssid: "DupNet", password: "pass1", savePassword: true });
-      await repo.saveConnectedWifi({ ssid: "DupNet", password: "pass2", savePassword: true });
+      await repo.saveConnectedWifi({ ssid: "DupNet", password: "pass1234A", savePassword: true });
+      await repo.saveConnectedWifi({ ssid: "DupNet", password: "pass5678B", savePassword: true });
       const networks = await repo.getSavedNetworks();
       const dupNets = networks.filter((n) => n.ssid === "DupNet");
       expect(dupNets.length).toBe(1);
-      expect(dupNets[0].password).toBe("pass2");
+      expect(dupNets[0].password).toBe("pass5678B");
     });
   });
 
@@ -108,9 +108,9 @@ describe("wifiRepository", () => {
       expect(networks.find((n) => n.id === saved.id)).toBeUndefined();
     });
 
-    it("is a no-op for unknown id", async () => {
+    it("throws for unknown id", async () => {
       await repo.saveConnectedWifi({ ssid: "KeepMe", savePassword: false });
-      await repo.deleteSavedNetworkById(999999);
+      await expect(repo.deleteSavedNetworkById(999999)).rejects.toThrow("Network not found");
       const networks = await repo.getSavedNetworks();
       expect(networks.length).toBe(1);
     });

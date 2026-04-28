@@ -18,7 +18,7 @@ Your SmartWiFi Connect app has been successfully configured for **Android, iPhon
 ### 2. **Android APK** - Ready with Setup
 - ✅ Android native app wrapper (Capacitor)
 - ✅ Distribute on Google Play Store
-- ✅ Requires: Java 11+ & Android SDK (see guide)
+- ✅ Requires: Java 17 & Android SDK (see guide)
 - ✅ Build: `npm run android:apk`
 
 ### 3. **iOS IPA** - Ready with Setup
@@ -41,7 +41,7 @@ Your SmartWiFi Connect app has been successfully configured for **Android, iPhon
 3. **Done!** Users access via link, add to home screen
 
 ### **Option 2: Android APK** (30 minutes + setup)
-1. Install Java 11+ JDK
+1. Install Java 17 JDK
 2. Install Android SDK (via Android Studio)
 3. Run: `npm run android:apk`
 4. Get APK from: `web/android/app/build/outputs/apk/debug/app-debug.apk`

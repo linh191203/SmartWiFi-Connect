@@ -175,7 +175,7 @@ export function AppStateProvider({ children }) {
     });
   }
 
-  async function connectCurrent({ savePassword }) {
+  async function connectCurrent({ savePassword, passphrase }) {
     if (!state.currentDraft) {
       throw new Error("No Wi-Fi draft to save");
     }
@@ -188,6 +188,7 @@ export function AppStateProvider({ children }) {
         security: state.currentDraft.security || "WPA/WPA2",
         sourceFormat: state.currentDraft.sourceFormat || "manual_entry",
         savePassword,
+        passphrase,
       });
 
       await refreshSavedData();
@@ -195,6 +196,10 @@ export function AppStateProvider({ children }) {
     } finally {
       dispatch({ type: "set-busy", payload: false });
     }
+  }
+
+  async function decryptNetworkPassword(id, passphrase) {
+    return repository.decryptNetworkPassword(id, passphrase);
   }
 
   async function deleteSavedNetworkById(id) {
@@ -207,6 +212,29 @@ export function AppStateProvider({ children }) {
     await refreshSavedData();
   }
 
+  async function validateCurrentDraft() {
+    if (!state.currentDraft) {
+      throw new Error("No Wi-Fi draft to validate");
+    }
+
+    dispatch({ type: "set-busy", payload: true });
+    try {
+      const envelope = await repository.validateWifi(state.apiBaseUrl, {
+        ssid: state.currentDraft.ssid,
+        password: state.currentDraft.password,
+        ocrText: state.currentDraft.ocrText,
+      });
+
+      if (!envelope.ok) {
+        throw new Error(envelope.error || "Validation failed");
+      }
+
+      return envelope.data;
+    } finally {
+      dispatch({ type: "set-busy", payload: false });
+    }
+  }
+
   function saveUser(user) {
     repository.saveUser(user);
     dispatch({ type: "set-user", payload: user });
@@ -215,6 +243,11 @@ export function AppStateProvider({ children }) {
   function setApiBaseUrl(nextBaseUrl) {
     repository.saveApiBaseUrl(nextBaseUrl);
     dispatch({ type: "set-api-base-url", payload: nextBaseUrl });
+  }
+
+  function logout() {
+    repository.saveUser({ name: "", email: "" });
+    dispatch({ type: "set-user", payload: { name: "", email: "" } });
   }
 
   const value = useMemo(
@@ -226,11 +259,14 @@ export function AppStateProvider({ children }) {
         saveManualDraft,
         updateCurrentDraft,
         connectCurrent,
+        validateCurrentDraft,
+        decryptNetworkPassword,
         deleteSavedNetworkById,
         clearSavedNetworks,
         refreshSavedData,
         saveUser,
         setApiBaseUrl,
+        logout,
       },
     }),
     [state],

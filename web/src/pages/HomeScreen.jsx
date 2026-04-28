@@ -4,6 +4,7 @@ import { useAppState } from "../context/AppState";
 import { formatTime } from "../lib/format";
 import EmptyState from "../components/EmptyState";
 import NetworkCard from "../components/NetworkCard";
+import WifiReminderBanner from "../components/WifiReminderBanner";
 
 const actionsList = [
   {
@@ -34,13 +35,15 @@ export default function HomeScreen() {
 
   return (
     <div className="screen-stack">
+      <WifiReminderBanner />
+
       <section className="hero-strip panel">
         <div>
           <p className="eyebrow">Dashboard</p>
-          <h3>Same flow, browser-first implementation.</h3>
+          <h3>Save and manage your Wi-Fi credentials.</h3>
           <p className="muted">
-            Android-only behaviors like native Wi-Fi connection are replaced with review and local
-            save actions. OCR parse and history logic stay aligned with the existing repository.
+            Capture Wi-Fi details from a photo, QR code, or enter them manually — then save them
+            securely on your device. Copy your credentials anytime from history.
           </p>
         </div>
         <div className="summary-box">

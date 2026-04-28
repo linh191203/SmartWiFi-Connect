@@ -10,6 +10,7 @@ export default function ManualEntryScreen() {
     password: "",
     security: "WPA/WPA2",
   });
+  const [showPassword, setShowPassword] = useState(false);
 
   function handleSubmit(event) {
     event.preventDefault();
@@ -30,13 +31,25 @@ export default function ManualEntryScreen() {
             required
           />
         </label>
-        <label className="field">
+        <div className="field">
           <span>Password</span>
-          <input
-            value={form.password}
-            onChange={(event) => setForm({ ...form, password: event.target.value })}
-          />
-        </label>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <input
+              style={{ flex: 1 }}
+              type={showPassword ? "text" : "password"}
+              value={form.password}
+              onChange={(event) => setForm({ ...form, password: event.target.value })}
+              autoComplete="new-password"
+            />
+            <button
+              type="button"
+              className="button-ghost compact-button"
+              onClick={() => setShowPassword((v) => !v)}
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+        </div>
         <label className="field">
           <span>Security</span>
           <select

@@ -33,9 +33,19 @@ describe("validateWifiCandidate", () => {
       expect(result.flags).toContain("missing_password");
     });
 
+    test("validated is false when only ssid provided", () => {
+      const result = validateWifiCandidate({ ssid: "OnlySSID" });
+      expect(result.validated).toBe(false);
+    });
+
     test("flags missing_ssid when only password provided", () => {
       const result = validateWifiCandidate({ password: "onlypassword123" });
       expect(result.flags).toContain("missing_ssid");
+    });
+
+    test("validated is false when only password provided", () => {
+      const result = validateWifiCandidate({ password: "onlypassword123" });
+      expect(result.validated).toBe(false);
     });
   });
 

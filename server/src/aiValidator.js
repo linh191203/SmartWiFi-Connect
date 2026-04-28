@@ -137,7 +137,8 @@ function validateWifiCandidate(input) {
   const confidence = Number(Math.min(Math.max(score, 0.01), 0.99).toFixed(2));
   const criticalFlags = new Set(["password_too_long", "ssid_too_long", "ocr_parse_failed"]);
   const hasCriticalFlag = flags.some((flag) => criticalFlags.has(flag));
-  const validated = Boolean(normalizedSsid || normalizedPassword);
+  // A credential is "validated" only when both SSID and password are present and valid
+  const validated = Boolean(normalizedSsid && normalizedPassword);
   const shouldAutoConnect = Boolean(
     normalizedSsid &&
       normalizedPassword &&

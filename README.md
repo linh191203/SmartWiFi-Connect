@@ -27,6 +27,19 @@ npm run build              # Build web app
 ### For Android APK
 See: [docs/MOBILE_SETUP.md](docs/MOBILE_SETUP.md)
 
+Quick one-time setup (Windows):
+```powershell
+setx JAVA_HOME "C:\Program Files\Eclipse Adoptium\jdk-17.0.18.8-hotspot"
+setx ANDROID_HOME "C:\Users\<YourUser>\AppData\Local\Android\Sdk"
+setx ANDROID_SDK_ROOT "C:\Users\<YourUser>\AppData\Local\Android\Sdk"
+```
+Then open a new terminal and run:
+```bash
+npm run build:android
+cd web/android
+./gradlew.bat assembleDebug
+```
+
 ### For iPhone App
 See: [docs/DEPLOY_GUIDE.md](docs/DEPLOY_GUIDE.md)
 
@@ -46,18 +59,18 @@ See: [docs/DEPLOY_GUIDE.md](docs/DEPLOY_GUIDE.md)
 
 ## 📚 Cấu trúc tài liệu
 Xem thêm trong thư mục `docs/`:
-- `docs/product.md`
-- `docs/architecture.md`
+- `docs/QUICK_REFERENCE.md` - Quick lookup
+- `docs/API_GUIDE.md` - 📌 **START HERE** - Complete API implementation guide
+- `docs/NETWORK_SAVING.md` - How networks are saved and managed
+- `docs/USER_GUIDE_SAVE_NETWORKS.md` - User guide for saving networks
+- `docs/api-contract.md` - API specification for all endpoints
+- `docs/DUMMY_DATA.md` - Test data and examples
+- `docs/TESTING_GUIDE.md` - Testing procedures and debugging
+- `docs/product.md` - Product requirements
+- `docs/architecture.md` - System architecture
 - `docs/ui-flow.md`
 - `docs/tasks.md`
 - `docs/memory.md`
-
-## Cấu trúc tài liệu
-Xem thêm trong thư mục `docs/`:
-- `docs/product.md`
-- `docs/architecture.md`
-- `docs/ui-flow.md`
-- `docs/tasks.md`
 
 ## Chạy app
 

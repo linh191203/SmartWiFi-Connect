@@ -2,6 +2,13 @@ const express = require("express");
 const cors = require("cors");
 const { parseOcrWifiData } = require("./ocrParser");
 const { validateWifiCandidate } = require("./aiValidator");
+const {
+  saveNetwork,
+  listNetworks,
+  getNetworkById,
+  deleteNetwork,
+  clearNetworks,
+} = require("./networkDb");
 
 const allowedOrigins = parseAllowedOrigins(
   process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGIN,
@@ -12,7 +19,7 @@ const app = express();
 app.use(cors(buildCorsOptions(allowedOrigins)));
 app.use(express.json({ limit: "1mb" }));
 
-app.get("/health", (_req, res) => {
+app.get(["/health", "/api/health"], (_req, res) => {
   res.status(200).json({
     ok: true,
     service: "smartwificonnect-server",
@@ -36,6 +43,13 @@ app.post("/api/v1/ocr/parse", (req, res) => {
       return res.status(400).json({
         ok: false,
         error: "Field 'ocrText' must not be empty",
+      });
+    }
+
+    if (normalizedOcrText.length > 5000) {
+      return res.status(400).json({
+        ok: false,
+        error: "Field 'ocrText' must not exceed 5000 characters",
       });
     }
 
@@ -88,6 +102,97 @@ app.post("/api/ai/validate", (req, res) => {
       data: result,
       timestamp: new Date().toISOString(),
     });
+  } catch (error) {
+    return nextError(res, error);
+  }
+});
+
+// ── /api/networks ─────────────────────────────────────────────────────────────
+
+// Resolve userId from query param, header, or default to "anonymous"
+function resolveUserId(req) {
+  const fromHeader = req.headers["x-user-id"];
+  const fromQuery = req.query.userId;
+  const raw = fromHeader || fromQuery || "anonymous";
+  return String(raw).trim().slice(0, 64) || "anonymous";
+}
+
+// GET /api/networks — list all networks for user
+app.get("/api/networks", (req, res) => {
+  try {
+    const userId = resolveUserId(req);
+    const networks = listNetworks(userId);
+    return res.status(200).json({ ok: true, data: networks });
+  } catch (error) {
+    return nextError(res, error);
+  }
+});
+
+// POST /api/networks — save (upsert) a network
+app.post("/api/networks", (req, res) => {
+  try {
+    const userId = resolveUserId(req);
+    const { ssid, password, security, sourceFormat, passwordSaved, passwordEncrypted } =
+      req.body || {};
+
+    if (typeof ssid !== "string" || !ssid.trim()) {
+      return res.status(400).json({ ok: false, error: "Field 'ssid' is required" });
+    }
+    const trimmedSsid = ssid.trim();
+    if (trimmedSsid.length > 32) {
+      return res.status(400).json({ ok: false, error: "Field 'ssid' must be 32 characters or less" });
+    }
+    if (password !== undefined && password !== null && typeof password !== "string") {
+      return res.status(400).json({ ok: false, error: "Field 'password' must be a string" });
+    }
+    const trimmedPassword = typeof password === "string" ? password.trim() : null;
+    if (trimmedPassword && trimmedPassword.length < 8) {
+      return res.status(400).json({ ok: false, error: "Field 'password' must be at least 8 characters" });
+    }
+    if (trimmedPassword && trimmedPassword.length > 63 && !passwordEncrypted) {
+      return res.status(400).json({ ok: false, error: "Field 'password' must be 63 characters or less" });
+    }
+
+    const record = saveNetwork({
+      userId,
+      ssid: trimmedSsid,
+      password: trimmedPassword || null,
+      security: normalizeOptionalString(security) || "WPA/WPA2",
+      sourceFormat: normalizeOptionalString(sourceFormat) || "manual_entry",
+      passwordSaved: Boolean(passwordSaved),
+      passwordEncrypted: Boolean(passwordEncrypted),
+    });
+
+    return res.status(201).json({ ok: true, data: record });
+  } catch (error) {
+    return nextError(res, error);
+  }
+});
+
+// DELETE /api/networks — clear all networks for user
+app.delete("/api/networks", (req, res) => {
+  try {
+    const userId = resolveUserId(req);
+    const count = clearNetworks(userId);
+    return res.status(200).json({ ok: true, deleted: count });
+  } catch (error) {
+    return nextError(res, error);
+  }
+});
+
+// DELETE /api/networks/:id — delete one network
+app.delete("/api/networks/:id", (req, res) => {
+  try {
+    const userId = resolveUserId(req);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ ok: false, error: "Invalid network id" });
+    }
+    const deleted = deleteNetwork(id, userId);
+    if (!deleted) {
+      return res.status(404).json({ ok: false, error: "Network not found" });
+    }
+    return res.status(200).json({ ok: true, id });
   } catch (error) {
     return nextError(res, error);
   }

@@ -1,11 +1,19 @@
 {
-  "devDependencies": {
-    "@capacitor/cli": "^8.3.1",
-    "@vite-pwa/assets-generator": "^1.0.2",
-    "vite-plugin-pwa": "^1.2.0"
-  },
-  "dependencies": {
-    "@capacitor/android": "^8.3.1",
-    "@capacitor/core": "^8.3.1"
+  "name": "smartwificonnect",
+  "version": "1.0.0",
+  "description": "SmartWiFi Connect — scan Wi-Fi credentials via OCR, QR, or manual entry",
+  "private": true,
+  "scripts": {
+    "dev": "cd web && npm run dev",
+    "dev:server": "cd server && npm run dev",
+    "build": "cd web && npm run build",
+    "test": "npm run test:server && npm run test:web",
+    "test:server": "cd server && npm test",
+    "test:web": "cd web && npm test",
+    "test:smoke": "cd server && npm run test:smoke",
+    "start:server": "cd server && npm start",
+    "build:mobile": "cd web && npm run build:mobile",
+    "build:android": "cd web && npm run build:android",
+    "build:ios": "cd web && npm run build:ios"
   }
 }

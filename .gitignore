@@ -11,3 +11,8 @@ hs_err_pid*
 /web/node_modules
 /web/dist
 /web/.vite
+
+# Generated data/artifacts
+/server/data
+/web/android/build
+/web/android/app/build

@@ -1,3 +1,9 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "chat.tools.terminal.autoApprove": {
+        "/^\\$jdk = Get-ChildItem 'C:\\\\Program Files\\\\Eclipse Adoptium' -Directory \\| Where-Object \\{ \\$_\\.Name -like 'jdk-17\\*' \\} \\| Sort-Object Name -Descending \\| Select-Object -First 1 -ExpandProperty FullName; if \\(-not \\$jdk\\) \\{ throw 'JDK 17 not found' \\}; \\$sdk = 'C:\\\\Users\\\\naspo\\\\AppData\\\\Local\\\\Android\\\\Sdk'; setx JAVA_HOME \"\\$jdk\"; setx ANDROID_HOME \"\\$sdk\"; setx ANDROID_SDK_ROOT \"\\$sdk\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
 }

@@ -42,7 +42,15 @@ describe("storage", () => {
     });
 
     it("saves and retrieves saved networks", () => {
-      const networks = [{ id: 1, ssid: "HomeNet", password: "pass1234" }];
+      const networks = [
+        {
+          id: 1,
+          ssid: "HomeNet",
+          password: "pass1234",
+          passwordSaved: true,
+          lastConnectedAtMillis: 1700000000000,
+        },
+      ];
       setSavedNetworksStorage(networks);
       expect(getSavedNetworksStorage()).toEqual(networks);
     });

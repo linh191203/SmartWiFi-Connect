@@ -6,17 +6,40 @@ import EmptyState from "../components/EmptyState";
 export default function ReviewScreen() {
   const { state, actions } = useAppState();
   const [savePassword, setSavePassword] = useState(true);
+  const [useEncryption, setUseEncryption] = useState(false);
+  const [passphrase, setPassphrase] = useState("");
+  const [passphraseConfirm, setPassphraseConfirm] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const draft = useMemo(() => state.currentDraft, [state.currentDraft]);
 
   async function handleConnect() {
     setMessage("");
     setError("");
+
+    if (savePassword && useEncryption) {
+      if (!passphrase) {
+        setError("Please enter an encryption passphrase.");
+        return;
+      }
+      if (passphrase !== passphraseConfirm) {
+        setError("Passphrases do not match.");
+        return;
+      }
+    }
+
     try {
-      await actions.connectCurrent({ savePassword });
-      setMessage("Network saved to browser history. Direct Wi-Fi connection is not available on web.");
+      await actions.connectCurrent({
+        savePassword,
+        passphrase: savePassword && useEncryption ? passphrase : "",
+      });
+      setMessage(
+        useEncryption && savePassword
+          ? "Network saved. Password is encrypted with your passphrase."
+          : "Network saved to browser history. Direct Wi-Fi connection is not available on web.",
+      );
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : "Unable to save network");
     }
@@ -55,19 +78,37 @@ export default function ReviewScreen() {
               onChange={(event) => actions.updateCurrentDraft({ ssid: event.target.value })}
             />
           </label>
-          <label className="field">
+          <div className="field">
             <span>Password</span>
-            <input
-              value={draft.password}
-              onChange={(event) => actions.updateCurrentDraft({ password: event.target.value })}
-            />
-          </label>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input
+                style={{ flex: 1 }}
+                type={showPassword ? "text" : "password"}
+                value={draft.password}
+                onChange={(event) => actions.updateCurrentDraft({ password: event.target.value })}
+                autoComplete="off"
+              />
+              <button
+                type="button"
+                className="button-ghost compact-button"
+                onClick={() => setShowPassword((v) => !v)}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
+          </div>
           <label className="field">
             <span>Security</span>
-            <input
+            <select
               value={draft.security}
               onChange={(event) => actions.updateCurrentDraft({ security: event.target.value })}
-            />
+            >
+              <option>WPA/WPA2</option>
+              <option>WPA3</option>
+              <option>WEP</option>
+              <option>Open</option>
+              <option>Unknown</option>
+            </select>
           </label>
           <label className="field">
             <span>Confidence</span>
@@ -83,6 +124,45 @@ export default function ReviewScreen() {
           />
           <span>Save password in this browser</span>
         </label>
+
+        {savePassword ? (
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={useEncryption}
+              onChange={(event) => setUseEncryption(event.target.checked)}
+            />
+            <span>Encrypt password with passphrase</span>
+          </label>
+        ) : null}
+
+        {savePassword && useEncryption ? (
+          <>
+            <label className="field">
+              <span>Passphrase</span>
+              <input
+                type="password"
+                placeholder="Enter encryption passphrase"
+                value={passphrase}
+                onChange={(event) => setPassphrase(event.target.value)}
+                autoComplete="new-password"
+              />
+            </label>
+            <label className="field">
+              <span>Confirm passphrase</span>
+              <input
+                type="password"
+                placeholder="Re-enter passphrase"
+                value={passphraseConfirm}
+                onChange={(event) => setPassphraseConfirm(event.target.value)}
+                autoComplete="new-password"
+              />
+            </label>
+            <p className="hint-text">
+              You will need this passphrase to reveal the password later. It is never stored.
+            </p>
+          </>
+        ) : null}
 
         {draft.ocrText ? (
           <label className="field">

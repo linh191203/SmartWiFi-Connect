@@ -1,4 +1,5 @@
-import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, Navigate, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { useAppState } from "./context/AppState";
 import OnboardingScreen from "./pages/OnboardingScreen";
 import LoginScreen from "./pages/LoginScreen";
@@ -20,16 +21,24 @@ const navItems = [
 ];
 
 function AppLayout() {
-  const { state } = useAppState();
+  const { state, actions } = useAppState();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!state.health.ok && !state.health.error) {
+      actions.checkApiHealth().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="app-frame">
       <aside className="sidebar">
         <div>
           <p className="eyebrow">SmartWiFi Connect</p>
-          <h1>React Port</h1>
+          <h1>Wi-Fi Manager</h1>
           <p className="muted">
-            Web frontend rebuilt from the existing Android flow, repository behavior, and OCR API.
+            Scan a sticker, read a QR code, or type credentials manually — then copy or save them for later.
           </p>
         </div>
 
@@ -63,8 +72,8 @@ function AppLayout() {
       <main className="content-shell">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Current user</p>
-            <h2>{state.user.name || "Guest mode"}</h2>
+            <p className="eyebrow">Signed in as</p>
+            <h2>{state.user.name || "Guest"}</h2>
           </div>
           <div className="topbar-meta">
             <div className="stat-chip">
@@ -75,6 +84,17 @@ function AppLayout() {
               <strong>{state.savedSummary.latestSsid || "-"}</strong>
               <span>latest SSID</span>
             </div>
+            {state.user.name ? (
+              <button
+                type="button"
+                className="button-ghost compact-button"
+                onClick={() => { actions.logout(); navigate("/"); }}
+              >
+                Sign out
+              </button>
+            ) : (
+              <NavLink to="/login" className="button-ghost compact-button">Sign in</NavLink>
+            )}
           </div>
         </header>
         <Outlet />

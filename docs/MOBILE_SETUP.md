@@ -43,20 +43,20 @@ npm run ios:build
 ## 🤖 Android Setup & Build
 
 ### Prerequisites
-1. **Java 11 or newer** (required by Android Gradle 8.13)
+1. **Java 17** (recommended baseline for this project)
 2. **Android SDK** (Android Studio or command-line tools)
 3. **ANDROID_HOME** environment variable configured
 
-### Step 1: Install Java 11+
+### Step 1: Install Java 17
 
 #### Option A: Using Chocolatey (Windows)
 ```powershell
-choco install openjdk11
+choco install openjdk17
 ```
 
 #### Option B: Manual Download
 - Download from [Adoptium OpenJDK](https://adoptium.net/) or [Oracle JDK](https://www.oracle.com/java/technologies/downloads/)
-- Install JDK 11 or 17 (17 recommended)
+- Install JDK 17
 - Add to PATH or set `JAVA_HOME`
 
 **Verify installation:**

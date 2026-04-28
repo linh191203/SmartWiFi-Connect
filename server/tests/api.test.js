@@ -9,6 +9,12 @@ describe("GET /health", () => {
     expect(res.body.service).toBe("smartwificonnect-server");
     expect(typeof res.body.timestamp).toBe("string");
   });
+
+  test("also responds at /api/health alias", async () => {
+    const res = await request(app).get("/api/health");
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
 });
 
 describe("POST /api/v1/ocr/parse", () => {
@@ -49,6 +55,20 @@ describe("POST /api/v1/ocr/parse", () => {
     const res = await request(app).post("/api/v1/ocr/parse").send({ ocrText: "   " });
     expect(res.status).toBe(400);
     expect(res.body.ok).toBe(false);
+  });
+
+  test("returns 400 when ocrText exceeds 5000 characters", async () => {
+    const res = await request(app).post("/api/v1/ocr/parse").send({ ocrText: "a".repeat(5001) });
+    expect(res.status).toBe(400);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.error).toMatch(/5000/);
+  });
+
+  test("returns 200 with heuristic result for unstructured text", async () => {
+    const res = await request(app).post("/api/v1/ocr/parse").send({ ocrText: "HomeNetwork\npassword12345" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.data).toBeDefined();
   });
 });
 
