@@ -59,7 +59,7 @@ Component dùng chung:
 
 ### feature.history
 - HistoryScreen
-- HistoryDetailScreen
+  - HistoryDetailScreen
 
 ### feature.settings
 - SettingsScreen

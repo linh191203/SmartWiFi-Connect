@@ -2,6 +2,7 @@ package com.example.smartwificonnect.data.local
 
 import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
@@ -12,6 +13,13 @@ data class SavedWifiRecordDraft(
     val password: String,
     val sourceFormat: String,
     val confidence: Double?,
+    val aiConfidence: Double?,
+    val aiSuggestion: String,
+    val aiRecommendation: String,
+    val aiShouldAutoConnect: Boolean,
+    val aiFlags: List<String>,
+    val fuzzyBestMatch: String?,
+    val fuzzyScore: Double?,
 )
 
 data class SavedWifiRecord(
@@ -22,6 +30,13 @@ data class SavedWifiRecord(
     val password: String,
     val sourceFormat: String,
     val confidence: Double?,
+    val aiConfidence: Double?,
+    val aiSuggestion: String,
+    val aiRecommendation: String,
+    val aiShouldAutoConnect: Boolean,
+    val aiFlags: List<String>,
+    val fuzzyBestMatch: String?,
+    val fuzzyScore: Double?,
     val createdAtMillis: Long,
 )
 
@@ -39,6 +54,13 @@ class WifiHistoryDbHelper(context: Context) :
                 $COLUMN_PASSWORD TEXT NOT NULL,
                 $COLUMN_SOURCE_FORMAT TEXT NOT NULL,
                 $COLUMN_CONFIDENCE REAL,
+                $COLUMN_AI_CONFIDENCE REAL,
+                $COLUMN_AI_SUGGESTION TEXT NOT NULL,
+                $COLUMN_AI_RECOMMENDATION TEXT NOT NULL,
+                $COLUMN_AI_SHOULD_AUTO_CONNECT INTEGER NOT NULL,
+                $COLUMN_AI_FLAGS TEXT NOT NULL,
+                $COLUMN_FUZZY_BEST_MATCH TEXT,
+                $COLUMN_FUZZY_SCORE REAL,
                 $COLUMN_CREATED_AT_MILLIS INTEGER NOT NULL
             )
             """.trimIndent(),
@@ -63,6 +85,25 @@ class WifiHistoryDbHelper(context: Context) :
             } else {
                 put(COLUMN_CONFIDENCE, record.confidence)
             }
+            if (record.aiConfidence == null) {
+                putNull(COLUMN_AI_CONFIDENCE)
+            } else {
+                put(COLUMN_AI_CONFIDENCE, record.aiConfidence)
+            }
+            put(COLUMN_AI_SUGGESTION, record.aiSuggestion)
+            put(COLUMN_AI_RECOMMENDATION, record.aiRecommendation)
+            put(COLUMN_AI_SHOULD_AUTO_CONNECT, if (record.aiShouldAutoConnect) 1 else 0)
+            put(COLUMN_AI_FLAGS, encodeFlags(record.aiFlags))
+            if (record.fuzzyBestMatch == null) {
+                putNull(COLUMN_FUZZY_BEST_MATCH)
+            } else {
+                put(COLUMN_FUZZY_BEST_MATCH, record.fuzzyBestMatch)
+            }
+            if (record.fuzzyScore == null) {
+                putNull(COLUMN_FUZZY_SCORE)
+            } else {
+                put(COLUMN_FUZZY_SCORE, record.fuzzyScore)
+            }
             put(COLUMN_CREATED_AT_MILLIS, createdAtMillis)
         }
 
@@ -75,6 +116,13 @@ class WifiHistoryDbHelper(context: Context) :
             password = record.password,
             sourceFormat = record.sourceFormat,
             confidence = record.confidence,
+            aiConfidence = record.aiConfidence,
+            aiSuggestion = record.aiSuggestion,
+            aiRecommendation = record.aiRecommendation,
+            aiShouldAutoConnect = record.aiShouldAutoConnect,
+            aiFlags = record.aiFlags,
+            fuzzyBestMatch = record.fuzzyBestMatch,
+            fuzzyScore = record.fuzzyScore,
             createdAtMillis = createdAtMillis,
         )
     }
@@ -95,23 +143,65 @@ class WifiHistoryDbHelper(context: Context) :
                 return null
             }
 
-            val confidenceIndex = cursor.getColumnIndexOrThrow(COLUMN_CONFIDENCE)
-            SavedWifiRecord(
-                id = cursor.getLong(cursor.getColumnIndexOrThrow(COLUMN_ID)),
-                baseUrl = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_BASE_URL)),
-                ocrText = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_OCR_TEXT)),
-                ssid = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_SSID)),
-                password = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_PASSWORD)),
-                sourceFormat = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_SOURCE_FORMAT)),
-                confidence = if (cursor.isNull(confidenceIndex)) null else cursor.getDouble(confidenceIndex),
-                createdAtMillis = cursor.getLong(cursor.getColumnIndexOrThrow(COLUMN_CREATED_AT_MILLIS)),
-            )
+            cursor.toSavedWifiRecord()
         }
+    }
+
+    fun getAll(limit: Int = 50): List<SavedWifiRecord> {
+        val sortOrder = "$COLUMN_CREATED_AT_MILLIS DESC, $COLUMN_ID DESC"
+        return readableDatabase.query(
+            TABLE_WIFI_SCAN_HISTORY,
+            ALL_COLUMNS,
+            null,
+            null,
+            null,
+            null,
+            sortOrder,
+            limit.coerceAtLeast(1).toString(),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(cursor.toSavedWifiRecord())
+                }
+            }
+        }
+    }
+
+    fun deleteById(id: Long): Boolean {
+        return writableDatabase.delete(
+            TABLE_WIFI_SCAN_HISTORY,
+            "$COLUMN_ID = ?",
+            arrayOf(id.toString()),
+        ) > 0
+    }
+
+    private fun Cursor.toSavedWifiRecord(): SavedWifiRecord {
+        val confidenceIndex = getColumnIndexOrThrow(COLUMN_CONFIDENCE)
+        val aiConfidenceIndex = getColumnIndexOrThrow(COLUMN_AI_CONFIDENCE)
+        val fuzzyBestMatchIndex = getColumnIndexOrThrow(COLUMN_FUZZY_BEST_MATCH)
+        val fuzzyScoreIndex = getColumnIndexOrThrow(COLUMN_FUZZY_SCORE)
+        return SavedWifiRecord(
+            id = getLong(getColumnIndexOrThrow(COLUMN_ID)),
+            baseUrl = getString(getColumnIndexOrThrow(COLUMN_BASE_URL)),
+            ocrText = getString(getColumnIndexOrThrow(COLUMN_OCR_TEXT)),
+            ssid = getString(getColumnIndexOrThrow(COLUMN_SSID)),
+            password = getString(getColumnIndexOrThrow(COLUMN_PASSWORD)),
+            sourceFormat = getString(getColumnIndexOrThrow(COLUMN_SOURCE_FORMAT)),
+            confidence = if (isNull(confidenceIndex)) null else getDouble(confidenceIndex),
+            aiConfidence = if (isNull(aiConfidenceIndex)) null else getDouble(aiConfidenceIndex),
+            aiSuggestion = getString(getColumnIndexOrThrow(COLUMN_AI_SUGGESTION)),
+            aiRecommendation = getString(getColumnIndexOrThrow(COLUMN_AI_RECOMMENDATION)),
+            aiShouldAutoConnect = getInt(getColumnIndexOrThrow(COLUMN_AI_SHOULD_AUTO_CONNECT)) == 1,
+            aiFlags = decodeFlags(getString(getColumnIndexOrThrow(COLUMN_AI_FLAGS))),
+            fuzzyBestMatch = if (isNull(fuzzyBestMatchIndex)) null else getString(fuzzyBestMatchIndex),
+            fuzzyScore = if (isNull(fuzzyScoreIndex)) null else getDouble(fuzzyScoreIndex),
+            createdAtMillis = getLong(getColumnIndexOrThrow(COLUMN_CREATED_AT_MILLIS)),
+        )
     }
 
     companion object {
         private const val DATABASE_NAME = "smart_wifi_connect.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
 
         private const val TABLE_WIFI_SCAN_HISTORY = "wifi_scan_history"
         private const val COLUMN_ID = "id"
@@ -121,6 +211,13 @@ class WifiHistoryDbHelper(context: Context) :
         private const val COLUMN_PASSWORD = "password"
         private const val COLUMN_SOURCE_FORMAT = "source_format"
         private const val COLUMN_CONFIDENCE = "confidence"
+        private const val COLUMN_AI_CONFIDENCE = "ai_confidence"
+        private const val COLUMN_AI_SUGGESTION = "ai_suggestion"
+        private const val COLUMN_AI_RECOMMENDATION = "ai_recommendation"
+        private const val COLUMN_AI_SHOULD_AUTO_CONNECT = "ai_should_auto_connect"
+        private const val COLUMN_AI_FLAGS = "ai_flags"
+        private const val COLUMN_FUZZY_BEST_MATCH = "fuzzy_best_match"
+        private const val COLUMN_FUZZY_SCORE = "fuzzy_score"
         private const val COLUMN_CREATED_AT_MILLIS = "created_at_millis"
 
         private val ALL_COLUMNS = arrayOf(
@@ -131,7 +228,24 @@ class WifiHistoryDbHelper(context: Context) :
             COLUMN_PASSWORD,
             COLUMN_SOURCE_FORMAT,
             COLUMN_CONFIDENCE,
+            COLUMN_AI_CONFIDENCE,
+            COLUMN_AI_SUGGESTION,
+            COLUMN_AI_RECOMMENDATION,
+            COLUMN_AI_SHOULD_AUTO_CONNECT,
+            COLUMN_AI_FLAGS,
+            COLUMN_FUZZY_BEST_MATCH,
+            COLUMN_FUZZY_SCORE,
             COLUMN_CREATED_AT_MILLIS,
         )
+
+        private fun encodeFlags(flags: List<String>): String = flags.joinToString(separator = "|")
+
+        private fun decodeFlags(raw: String?): List<String> {
+            if (raw.isNullOrBlank()) return emptyList()
+            return raw.split("|").mapNotNull { value ->
+                val trimmed = value.trim()
+                if (trimmed.isBlank()) null else trimmed
+            }
+        }
     }
 }

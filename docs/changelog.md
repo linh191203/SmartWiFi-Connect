@@ -287,3 +287,184 @@ User action
   - truyền 4 callback mới cho `OcrResultScreen`
 - Verify:
   - `:app:compileDebugKotlin` ✅
+
+## 2026-04-21 (W3 FE - AI giả lập + lưu lịch sử + ổn định)
+- Cập nhật API/data layer:
+  - thêm model `AiValidateRequest`, `AiValidateData`
+  - thêm model fuzzy SSID request/response
+  - thêm repository methods `validateAi()` và `fuzzyMatchSsid()`
+  - gọi `POST /api/ai/validate` từ FE sau khi parse OCR thành công
+  - gọi fuzzy SSID endpoint khi có danh sách mạng xung quanh
+- Cập nhật local persistence:
+  - mở rộng `WifiHistoryDbHelper` để lưu AI/fuzzy metadata
+  - thêm `getAll()` để đọc danh sách history
+  - thêm `getSavedWifiHistory()` trong repository
+  - cập nhật `MainUiState.historyRecords`
+- Cập nhật `MainViewModel`:
+  - thêm state `AiValidationState`
+  - resolve AI validation và fuzzy suggestion sau parse
+  - fallback fuzzy local nếu BE chưa sẵn sàng
+  - refresh history sau khi save SQLite
+  - refresh Wi-Fi xung quanh từ Android `WifiManager.scanResults`
+- Cập nhật OCR Result UI:
+  - hiển thị AI validation card với confidence/suggestion/recommendation
+  - thêm action dùng SSID/password normalized từ AI
+  - hiển thị danh sách Wi-Fi xung quanh
+  - đổi signal indicator từ cột mobile sang vòng cung Wi-Fi bằng Canvas
+- Cập nhật camera/scan:
+  - thêm `feature/camera/CameraPreview.kt` dùng CameraX
+  - `ImageScanScreen` dùng embedded CameraX preview để chụp OCR
+  - `QrScannerScreen` dùng embedded CameraX preview và ML Kit Barcode Scanning
+  - QR detect xong điều hướng sang OCR Result với raw text
+  - permission camera chỉ hỏi khi chưa cấp
+- Cập nhật UI:
+  - thêm animation vạch scan trắng chạy lên/xuống trong khung QR
+  - thêm animation vạch scan trắng chạy lên/xuống trong khung chụp ảnh OCR
+  - tạo `feature/history/HistoryScreen.kt` theo mock lịch sử kết nối
+  - route `Routes.HISTORY` không còn placeholder
+- Cập nhật Android permission:
+  - thêm quyền Wi-Fi/location để đọc Wi-Fi xung quanh khi thiết bị cho phép
+- Cập nhật test:
+  - mở rộng `MainViewModelMockApiIntegrationTest` với parse + AI validate + fuzzy match
+- Chủ động không làm:
+  - không bổ sung BE mock nâng cao trong FE branch để tránh conflict với code BE
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+  - `:app:compileDebugAndroidTestKotlin` ✅
+  - `:app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.example.smartwificonnect.MainViewModelMockApiIntegrationTest` ✅
+
+## 2026-04-22 (FE - Kết nối Wi-Fi thật phần cơ bản)
+- Thêm file mới `app/src/main/java/com/example/smartwificonnect/wifi/WifiConnector.kt`
+  - dùng `WifiNetworkSpecifier` + `ConnectivityManager.requestNetwork`
+  - trả về `WifiConnectResult` (Success/Failed)
+  - chuẩn hóa failure reason: permission/input/auth_or_unavailable/timeout/unknown
+- Cập nhật `MainViewModel`:
+  - thêm `wifiConnector`
+  - thêm `connectToParsedWifi()`
+  - thêm `onWifiConnectionPermissionDenied()`
+  - thêm state `WifiConnectionState` trong `MainUiState`
+  - reset connection state khi dữ liệu SSID/password thay đổi
+- Cập nhật `OcrResultScreen`:
+  - `ParsedWifiCard` có nút `Ket noi Wi-Fi that`
+  - hiển thị trạng thái kết nối `Connecting/Connected/Failed`
+- Cập nhật `AppNavHost`:
+  - thêm launcher xin quyền trước khi gọi connect Wi-Fi
+  - nối callback `onConnectWifi` từ UI xuống ViewModel
+- Cập nhật manifest:
+  - thêm quyền `android.permission.CHANGE_NETWORK_STATE`
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+
+## 2026-04-22 (FE - Save network API sau connect)
+- Cập nhật data layer để hỗ trợ save network backend:
+  - thêm model `SaveNetworkRequest`
+  - thêm API `POST /api/networks` trong `WifiApiService`
+  - thêm repository method `saveConnectedNetwork(...)`
+- Cập nhật `MainViewModel.connectToParsedWifi()`:
+  - khi `WifiConnectResult.Success` thì gọi API save network ngay sau connect
+  - xử lý theo kiểu best-effort: lỗi API không làm fail trạng thái kết nối
+  - cập nhật `statusMessage` theo kết quả save server
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+
+## 2026-04-22 (FE - Lưu local history sau connect thành công)
+- Cập nhật repository:
+  - thêm method `saveConnectedNetworkLocal(...)` trong `WifiRepository`
+  - implement trong `DefaultWifiRepository` để ghi SQLite trực tiếp
+- Cập nhật `MainViewModel.connectToParsedWifi()`:
+  - khi connect thành công sẽ lưu local history trước (SQLite)
+  - cập nhật `historyRecords` ngay để `HistoryScreen` phản ánh realtime
+  - giữ API save server ở chế độ best-effort như cũ
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+
+## 2026-04-22 (FE - Gợi ý Wi-Fi chỉ dùng dữ liệu scan thật)
+- Bỏ fallback mạng minh họa trong luồng gợi ý SSID/nearby Wi-Fi.
+- `refreshNearbyWifiNetworks()`:
+  - ưu tiên danh sách scan mới nhất từ thiết bị
+  - nếu scan tạm thời không cập nhật được thì giữ danh sách scan gần nhất, không bơm dữ liệu giả
+- `getAvailableNearbyNetworks()`:
+  - chỉ trả về dữ liệu scan thật hoặc dữ liệu scan trước đó trong state
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+
+## 2026-04-25 (FE - SettingsScreen + dark mode app-wide)
+- Tạo `feature/settings/SettingsScreen.kt` theo mock:
+  - top bar, profile card, section `KẾT NỐI`
+  - section `HỆ THỐNG & QUYỀN RIÊNG TƯ`
+  - section `GIỚI THIỆU`
+  - bottom nav fixed với tab `Cài đặt` active
+- Cập nhật `AppNavHost`:
+  - route `Routes.SETTINGS` không còn placeholder text
+  - mọi nút/tab `Cài đặt` điều hướng sang `SettingsScreen`
+- Thêm dark mode app-wide:
+  - thêm `isDarkModeEnabled` trong `MainUiState`
+  - thêm `MainViewModel.onDarkModeChanged(...)`
+  - `MainActivity` bọc app bằng `SmartWifiAppTheme(darkTheme = mainState.isDarkModeEnabled)`
+  - thêm `LocalAppDarkMode` trong `ui/theme/Theme.kt`
+- Mở rộng palette sáng/tối cho các màn chính:
+  - `HomeScreen`
+  - `HistoryScreen`
+  - `ManualEntryScreen`
+  - `ConnectionFailedScreen`
+  - `CameraPermissionScreen`
+  - `QrScannerScreen`
+  - `ImageScanScreen`
+  - `ImagePickerScreen`
+  - `OcrResultScreen`
+  - `LoginScreen`
+  - `RegisterScreen`
+  - `OnboardingScreen`
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+
+## 2026-04-27 (FE - UI polish top bar avatar)
+- Tinh chỉnh trục nhìn avatar góc phải:
+  - `SettingsScreen`: hạ avatar top bar xuống nhẹ để cân thị giác
+  - `HomeScreen`: hạ avatar góc phải xuống rõ hơn để đồng bộ với màn Cài đặt
+- Mục tiêu:
+  - cân hàng với title/menu bên trái
+  - bớt cảm giác avatar bị nhô cao trong top bar
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+
+## 2026-04-27 (FE - Share Wi-Fi screen)
+- Tạo `feature/share/ShareWifiScreen.kt` theo mock `Chia sẻ Wi‑Fi`:
+  - top bar back + title
+  - radar tìm thiết bị ở gần
+  - headline/trạng thái chia sẻ
+  - device cards với CTA `Chia sẻ` / `Chấp nhận`
+  - bottom nav fixed với tab `Chia sẻ` active
+- Thêm route `Routes.SHARE`.
+- Cập nhật `AppNavHost`:
+  - mọi `onShareClick` trong Home/History/Settings/QR/ImageScan/ConnectionFailed điều hướng sang `Routes.SHARE`
+  - `Routes.SHARE` nhận dữ liệu SSID hiện tại hoặc SSID gần nhất đã lưu để quyết định có thể chia sẻ hay không
+- Cập nhật `HomeScreen`:
+  - thêm callback `onShareClick`
+  - tab `Chia sẻ` không còn đi nhầm sang `ManualEntry`
+- Cập nhật docs:
+  - `docs/ui-flow.md`
+- Verify:
+  - `:app:compileDebugKotlin` ✅
+
+## 2026-04-28 (FE - Network detail screen)
+- Thêm route `Routes.NETWORK_DETAIL` và màn mới `feature/networkdetail/NetworkDetailScreen.kt`
+- Nối click từ `HomeScreen` và `HistoryScreen` sang màn chi tiết mạng
+- `Home` giờ ưu tiên lấy danh sách mạng gần đây từ `historyRecords` thật; fallback về preview data nếu chưa có lịch sử
+- `MainViewModel` thêm selected detail state + live telemetry:
+  - `selectedNetworkDetail`
+  - `selectedNetworkTelemetry`
+  - mở chi tiết từ Home/History
+  - refresh telemetry bằng `WifiManager.connectionInfo`
+- Màn chi tiết mạng hiển thị:
+  - giao thức
+  - tần số
+  - đánh giá sóng tốt/yếu + dBm
+  - link speed / RX / TX realtime nếu mạng đang kết nối
+  - usage chart mock ổn định theo SSID để giữ cảm giác landing/product
+  - CTA `Kết nối ngay` + `Xóa mạng này`
+- Thêm xóa lịch sử mạng trong SQLite:
+  - `WifiHistoryDbHelper.deleteById`
+  - `WifiRepository.deleteSavedWifiRecord`
+- Verify:
+  - `:app:compileDebugKotlin` ✅

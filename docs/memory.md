@@ -14,6 +14,16 @@
 - Đã có OCR flow thực tế: Gallery/Camera -> ML Kit OCR -> OCR Result -> Parse qua BE
 - Đã fix crash runtime permission camera khi bấm chụp ở OCR flow
 - Đã có bộ Mock API integration test cho FE parse OCR
+- Đã có W3 FE flow: AI validate, fuzzy SSID API/fallback, OCR/AI choices UI, lưu SQLite history
+- Đã có CameraX preview thật cho QR và OCR capture, QR scan bằng ML Kit Barcode
+- Đã có HistoryScreen đọc dữ liệu SQLite thật
+- OCR Result đã ưu tiên hiển thị Wi-Fi xung quanh từ Android scanResults nếu đủ quyền
+- Đã có `NetworkDetailScreen` mở từ Home/History
+- Màn chi tiết mạng đã có trạng thái live cho mạng đang kết nối:
+  - RSSI / dBm
+  - frequency
+  - link speed / RX / TX
+- Đã có xóa 1 mạng khỏi SQLite history từ màn chi tiết
 
 ---
 
@@ -70,6 +80,7 @@
 - Scanner dễ lỗi overlay / background / tràn viền
 - OCR cần test với ảnh thật
 - Wi-Fi connect phụ thuộc Android version và quyền hệ thống
+- Link speed realtime lấy từ `WifiManager.connectionInfo`, không phải đo throughput internet thật
 
 ---
 
@@ -200,4 +211,151 @@
 - Đã bổ sung `MainViewModel` mock fuzzy match (Levenshtein similarity)
   - Tự động trigger sau parse thành công
   - Sau này chỉ cần đổi `triggerFuzzyMatch()` sang gọi BE Fuse.js endpoint
+- Build `:app:compileDebugKotlin` thành công
+
+### 2026-04-21 (W3 FE - AI giả lập + lưu lịch sử + ổn định)
+- Đã nối FE gọi `POST /api/ai/validate` sau khi parse OCR thành công
+- Đã mở rộng model/API/repository cho AI validate và fuzzy SSID match
+- Đã lưu thêm metadata AI/fuzzy vào SQLite history:
+  - AI confidence, suggestion, recommendation, flags
+  - fuzzy best match, fuzzy score
+- Đã cập nhật `OcrResultScreen`:
+  - hiển thị OCR text editor
+  - hiển thị parsed Wi-Fi result
+  - hiển thị AI validation choices
+  - cho phép dùng SSID/password AI normalize
+- Đã cập nhật `SsidSuggestionCard`:
+  - gọi fuzzy API khi có BE
+  - fallback local nếu BE fuzzy chưa sẵn sàng
+  - danh sách Wi-Fi xung quanh expand/collapse
+  - đổi indicator sóng sang vòng cung Wi-Fi
+- Đã thêm `CameraPreview.kt` dùng CameraX cho QR scanner và OCR capture
+- Đã cập nhật QR scanner:
+  - camera preview thật
+  - ML Kit Barcode Scanning để tự nhận QR
+  - route sang `OCR Result` khi nhận raw QR text
+- Đã cập nhật camera permission:
+  - nếu đã cấp quyền thì không hỏi lại
+  - nếu chưa cấp mới đi qua `CameraPermissionScreen`
+- Đã tạo `HistoryScreen.kt`:
+  - UI theo mock lịch sử kết nối
+  - bottom nav fixed
+  - đọc danh sách record từ SQLite thật
+- Đã thêm animation vạch scan trắng chạy lên/xuống trong khung QR và khung chụp ảnh
+- Đã bổ sung quyền Android cho Wi-Fi scan:
+  - `ACCESS_WIFI_STATE`
+  - `CHANGE_WIFI_STATE`
+  - `ACCESS_FINE_LOCATION`
+  - `ACCESS_COARSE_LOCATION`
+  - `NEARBY_WIFI_DEVICES`
+- Không làm phần "BE mock nâng cao" để tránh conflict với nhánh BE
+- Verify:
+  - `:app:compileDebugKotlin` thành công
+  - `:app:compileDebugAndroidTestKotlin` thành công
+  - `MainViewModelMockApiIntegrationTest` với MockWebServer thành công
+
+### 2026-04-22 (Wi-Fi connect thật - FE)
+- Đã thêm `WifiConnector` dùng Android Wi-Fi API (`WifiNetworkSpecifier` + `ConnectivityManager.requestNetwork`)
+- Đã nối flow connect vào `MainViewModel.connectToParsedWifi()`
+- Đã thêm `WifiConnectionState` trong `MainUiState`:
+  - `Idle`
+  - `Connecting`
+  - `Connected`
+  - `Failed`
+- Đã cập nhật `OcrResultScreen`:
+  - thêm nút `Ket noi Wi-Fi that`
+  - hiển thị trạng thái loading/success/error cơ bản ngay trong `ParsedWifiCard`
+- Đã nối permission flow ở `AppNavHost`:
+  - khi user bấm connect sẽ check quyền Wi-Fi/location trước
+  - nếu chưa có quyền thì xin quyền, nếu user từ chối thì hiện lỗi rõ ràng
+- Đã thêm quyền `CHANGE_NETWORK_STATE` vào manifest để ổn định flow request network
+- Verify:
+  - `:app:compileDebugKotlin` thành công
+
+### 2026-04-22 (save network API sau khi connect thành công)
+- Đã nối FE gọi `POST /api/networks` sau khi kết nối Wi-Fi thành công:
+  - thêm `SaveNetworkRequest`
+  - thêm `WifiApiService.saveNetwork(...)`
+  - thêm `WifiRepository.saveConnectedNetwork(...)`
+  - `MainViewModel` gọi save API ở nhánh `WifiConnectResult.Success`
+- Cơ chế best-effort:
+  - nếu BE chưa có endpoint hoặc server lỗi thì vẫn giữ trạng thái `Connected`
+  - chỉ đổi `statusMessage` để báo "chưa lưu được lên server"
+- Build verify:
+  - `:app:compileDebugKotlin` thành công
+
+### 2026-04-22 (local history sau connect thành công)
+- Đã bổ sung lưu local SQLite ngay khi kết nối Wi-Fi thành công:
+  - thêm `WifiRepository.saveConnectedNetworkLocal(...)`
+  - implement `DefaultWifiRepository.saveConnectedNetworkLocal(...)`
+  - `MainViewModel.connectToParsedWifi()` gọi save local trong nhánh success
+- Đã cập nhật `historyRecords` tức thời sau khi save local để màn `History` thấy dữ liệu ngay
+- Luồng tổng hiện tại:
+  - connect success -> save local (SQLite) -> best-effort save server
+- Build verify:
+  - `:app:compileDebugKotlin` thành công
+
+### 2026-04-22 (gợi ý Wi-Fi realtime, bỏ minh họa)
+- Đã bỏ fallback `fallbackNearbyNetworks` trong `MainViewModel`.
+- Luồng nearby/fuzzy hiện dùng:
+  - scanResults realtime từ Android
+  - hoặc danh sách scan gần nhất đã có trong state (khi refresh fail tạm thời)
+- Không còn tự bơm danh sách Wi-Fi minh họa khi không scan được.
+- Build verify:
+  - `:app:compileDebugKotlin` thành công
+
+### 2026-04-25 (Settings + dark mode toàn app)
+- Đã tạo `SettingsScreen` theo mock mới:
+  - top bar `Cài đặt`
+  - profile card
+  - các nhóm `KẾT NỐI`, `HỆ THỐNG & QUYỀN RIÊNG TƯ`, `GIỚI THIỆU`
+  - bottom nav fixed, tab `Cài đặt` active
+- Đã nối route `Routes.SETTINGS` thật trong `AppNavHost`, bỏ placeholder text.
+- Đã thêm dark mode ở cấp app:
+  - `MainUiState.isDarkModeEnabled`
+  - `MainViewModel.onDarkModeChanged(...)`
+  - `SmartWifiAppTheme(darkTheme = ...)` trong `MainActivity`
+  - `LocalAppDarkMode` để các màn đọc trạng thái theme hiện tại
+- Đã cập nhật palette sáng/tối cho các màn đang có trong luồng chính:
+  - Onboarding / Login / Register
+  - Home / History / Settings
+  - QR Scan / Image Scan / Image Picker / OCR Result
+  - Manual Entry / Camera Permission / Connection Failed
+- Build `:app:compileDebugKotlin` thành công
+
+### 2026-04-27 (avatar top bar polish)
+- Đã chỉnh lại avatar góc phải cho cân thị giác hơn:
+  - `SettingsScreen` avatar top bar hạ nhẹ xuống
+  - `HomeScreen` avatar góc phải hạ xuống rõ hơn để đồng bộ
+- Ghi nhớ:
+  - nếu tiếp tục polish UI, nên rà các top bar còn lại để thống nhất baseline icon/avatar giữa các màn
+- Build `:app:compileDebugKotlin` thành công
+
+### 2026-04-27 (Share Wi-Fi screen)
+- Đã tạo `ShareWifiScreen` cho luồng chia sẻ mạng sang thiết bị ở gần.
+- Đã thêm route `Routes.SHARE` và nối toàn bộ tab/nút `Chia sẻ` sang route mới.
+- Đã sửa lệch hành vi ở `HomeScreen`:
+  - tab `Chia sẻ` trước đó đang map nhầm sang `ManualEntry`
+  - hiện đã điều hướng đúng sang `ShareWifiScreen`
+- Màn chia sẻ hiện hoạt động theo trạng thái FE:
+  - nếu có SSID đang kết nối hoặc SSID gần nhất đã lưu thì hiện UI tìm thiết bị
+  - nếu chưa có mạng để chia sẻ thì hiện empty state hướng dẫn kết nối trước
+- Build `:app:compileDebugKotlin` thành công
+
+### 2026-04-28 (Network detail screen)
+- Đã thêm `NetworkDetailScreen` cho luồng xem chi tiết 1 mạng Wi‑Fi.
+- Điểm vào hiện tại:
+  - tap 1 mạng ở `HomeScreen`
+  - tap 1 mạng ở `HistoryScreen`
+- `Home` giờ ưu tiên dữ liệu recent network từ `historyRecords` thật, fallback về preview nếu chưa có lịch sử.
+- `MainViewModel` giữ:
+  - `selectedNetworkDetail`
+  - `selectedNetworkTelemetry`
+- Nếu SSID đang được kết nối trên máy:
+  - màn detail refresh `RSSI`, `frequency`, `link speed`, `RX`, `TX` khoảng mỗi 1.5 giây
+- Nếu chỉ là mạng đã lưu:
+  - detail vẫn hiển thị quality + usage chart theo hướng UI landing/product
+- Đã thêm khả năng xóa 1 mạng khỏi SQLite history từ detail screen.
+- Ghi nhớ:
+  - phần Mbps hiện là link speed do Android trả về, chưa phải đo throughput internet thực tế
 - Build `:app:compileDebugKotlin` thành công

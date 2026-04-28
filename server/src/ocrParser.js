@@ -1,10 +1,71 @@
 const WIFI_QR_REGEX = /^WIFI:/i;
+const WIFI_QR_INLINE_REGEX = /WIFI:[^\n]*?;;/i;
+const WIFI_QR_LINE_REGEX = /WIFI:[^\n]*/i;
+const SSID_VALUE_REGEX =
+  /^\s*(?:ssid|wifi(?:\s*name)?|network\s*name|ten\s*wifi|t[eê]n\s*m[aạ]ng)\s*[:=-]\s*(.*)$/i;
+const PASSWORD_VALUE_REGEX =
+  /^\s*(?:password|pass\s*word|pass|pwd|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*(.*)$/i;
+const SSID_LABEL_ONLY_REGEX =
+  /^\s*(?:ssid|wifi(?:\s*name)?|network\s*name|ten\s*wifi|t[eê]n\s*m[aạ]ng)\s*[:=-]?\s*$/i;
+const PASSWORD_LABEL_ONLY_REGEX =
+  /^(?:password|pass\s*word|pass|pwd|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\s*[:=-]?\s*$/i;
+const PASSWORD_LABEL_REGEX =
+  /^\s*(?:password|pass\s*word|pass|pwd|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\b/i;
+const SSID_LABEL_REGEX =
+  /^\s*(?:ssid|wifi(?:\s*name)?|network\s*name|ten\s*wifi|t[eê]n\s*m[aạ]ng)\b/i;
 
 function cleanLine(line) {
   return line
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/[|]/g, "I")
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
     .trim();
+}
+
+function sanitizeCandidate(value) {
+  return String(value || "")
+    .replace(/^[`"'[\](){}<>]+/, "")
+    .replace(/[`"'[\](){}<>]+$/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function looksLikeUrl(value) {
+  return /(https?:\/\/|www\.|\.com\b|\.net\b|\.org\b)/i.test(String(value || ""));
+}
+
+function isLikelyNoiseLine(value) {
+  const text = String(value || "").trim();
+  if (!text) return true;
+  if (looksLikeUrl(text)) return true;
+  return /(free\s*wifi|mien\s*phi|hotline|email|username|dang\s*nhap|login|welcome|xin\s*chao|cam\s*on|scan|qr)/i.test(
+    text,
+  );
+}
+
+function extractValueAfterLabel(line, valueRegex, cutRegex) {
+  const match = cleanLine(line).match(valueRegex);
+  if (!match) return null;
+  const rawValue = String(match[1] || "");
+  const value = cutRegex ? rawValue.replace(cutRegex, "") : rawValue;
+  const cleaned = sanitizeCandidate(value);
+  return cleaned || null;
+}
+
+function pickNextUsefulLine(lines, fromIndex, forPassword) {
+  for (let i = fromIndex; i < Math.min(lines.length, fromIndex + 3); i += 1) {
+    const candidate = sanitizeCandidate(lines[i]);
+    if (!candidate) continue;
+    if (SSID_LABEL_ONLY_REGEX.test(candidate) || PASSWORD_LABEL_ONLY_REGEX.test(candidate)) continue;
+    if (isLikelyNoiseLine(candidate)) continue;
+    if (forPassword) {
+      if (looksLikePassword(candidate)) return stripPasswordPrefix(candidate) || candidate;
+      continue;
+    }
+    if (candidate.length <= 32 && !looksLikePassword(candidate)) return candidate;
+  }
+  return null;
 }
 
 function normalizeText(input) {
@@ -17,9 +78,17 @@ function normalizeText(input) {
 
 function parseWifiQrFormat(raw) {
   const text = String(raw || "").trim();
-  if (!WIFI_QR_REGEX.test(text)) return null;
+  let qrText = text;
 
-  const payload = text.replace(/^WIFI:/i, "");
+  if (!WIFI_QR_REGEX.test(qrText)) {
+    const embedded = text.match(WIFI_QR_INLINE_REGEX) || text.match(WIFI_QR_LINE_REGEX);
+    qrText = embedded ? embedded[0] : "";
+  }
+
+  if (!WIFI_QR_REGEX.test(qrText)) return null;
+  if (!/;\s*[SPT]\s*:/i.test(qrText)) return null;
+
+  const payload = qrText.replace(/^WIFI:/i, "");
   const fields = payload.split(/;(?=(?:[^\\]|\\.)*$)/);
 
   let ssid = null;
@@ -39,6 +108,8 @@ function parseWifiQrFormat(raw) {
     if (key === "T") security = value || null;
   }
 
+  if (!ssid && !password) return null;
+
   return {
     ssid,
     password,
@@ -49,24 +120,27 @@ function parseWifiQrFormat(raw) {
 }
 
 function extractFromLabeledLines(lines) {
-  const labels = {
-    ssid: /(ssid|wifi\s*name|network\s*name|ten\s*wifi|t[eê]n\s*m[aạ]ng)/i,
-    password: /(password|pass\s*word|pass|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)/i,
-  };
-
   let ssid = null;
   let password = null;
 
-  for (const line of lines) {
-    if (!ssid && labels.ssid.test(line)) {
-      const v = line.split(/[:=-]/).slice(1).join(":").trim();
-      if (v) ssid = v;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const cleaned = cleanLine(line);
+
+    if (!ssid) {
+      ssid =
+        extractValueAfterLabel(cleaned, SSID_VALUE_REGEX, PASSWORD_VALUE_REGEX) ||
+        (SSID_LABEL_ONLY_REGEX.test(cleaned) ? pickNextUsefulLine(lines, i + 1, false) : null);
     }
 
-    if (!password && labels.password.test(line)) {
-      const v = line.split(/[:=-]/).slice(1).join(":").trim();
-      if (v) password = v;
+    if (!password) {
+      const extractedPassword =
+        extractValueAfterLabel(cleaned, PASSWORD_VALUE_REGEX, SSID_VALUE_REGEX) ||
+        (PASSWORD_LABEL_ONLY_REGEX.test(cleaned) ? pickNextUsefulLine(lines, i + 1, true) : null);
+      password = extractedPassword ? stripPasswordPrefix(extractedPassword) || extractedPassword : null;
     }
+
+    if (ssid && password) break;
   }
 
   if (!ssid && !password) return null;
@@ -85,6 +159,12 @@ function stripPasswordPrefix(text) {
     .trim();
 }
 
+function stripSsidPrefix(text) {
+  return String(text || "")
+    .replace(/^(ssid|wifi(?:\s*name)?|network\s*name|ten\s*wifi|t[eê]n\s*m[aạ]ng)\s*[:=-]\s*/i, "")
+    .trim();
+}
+
 function isWifiHeaderLine(text) {
   const normalized = String(text || "")
     .toLowerCase()
@@ -100,10 +180,13 @@ function extractTwoLineSsidPassword(lines) {
     sanitizedLines.shift();
   }
 
+  // Two-line parsing is strict by design; large OCR blocks should be handled by labeled/heuristic parser.
+  if (sanitizedLines.length > 3) return null;
   if (sanitizedLines.length === 0) return null;
 
-  const first = sanitizedLines[0];
+  const first = stripSsidPrefix(sanitizedLines[0]) || sanitizedLines[0];
   const second = sanitizedLines[1] || "";
+  const third = sanitizedLines[2] || "";
 
   if (!first) return null;
 
@@ -116,7 +199,13 @@ function extractTwoLineSsidPassword(lines) {
     };
   }
 
-  const normalizedPassword = stripPasswordPrefix(second) || second;
+  let normalizedPassword = stripPasswordPrefix(second) || second;
+  if (PASSWORD_LABEL_ONLY_REGEX.test(second) && third) {
+    normalizedPassword = stripPasswordPrefix(third) || third;
+  }
+  if (PASSWORD_LABEL_ONLY_REGEX.test(normalizedPassword)) {
+    normalizedPassword = "";
+  }
   if (!normalizedPassword) {
     return {
       ssid: first,
@@ -135,49 +224,98 @@ function extractTwoLineSsidPassword(lines) {
 }
 
 function looksLikePassword(text) {
-  if (!text) return false;
-  if (text.length < 8) return false;
-  if (/\s{2,}/.test(text)) return false;
-  return /[A-Za-z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?`~]/.test(text);
+  const value = sanitizeCandidate(text);
+  if (!value) return false;
+  if (looksLikeUrl(value)) return false;
+  if (value.length < 8 || value.length > 63) return false;
+  if (/\s{2,}/.test(value)) return false;
+  return /[A-Za-z0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?`~]/.test(value);
+}
+
+function scorePasswordCandidate(line) {
+  const cleaned = sanitizeCandidate(line);
+  if (!cleaned) return null;
+
+  let score = 0;
+  let value = cleaned;
+  if (PASSWORD_LABEL_REGEX.test(cleaned)) {
+    score += 4;
+    value = stripPasswordPrefix(cleaned) || cleaned;
+  }
+
+  if (looksLikePassword(value)) score += 3;
+  if (!/\s/.test(value)) score += 1;
+  if (/[A-Za-z]/.test(value) && /\d/.test(value)) score += 1;
+  if (value.length > 20) score -= 0.5;
+  if (isLikelyNoiseLine(value)) score -= 3;
+
+  return { value, score };
+}
+
+function scoreSsidCandidate(line) {
+  const cleaned = sanitizeCandidate(line);
+  if (!cleaned) return null;
+
+  let score = 0;
+  let value = cleaned;
+  if (SSID_LABEL_REGEX.test(cleaned)) {
+    score += 4;
+    value = cleaned.replace(SSID_LABEL_REGEX, "").replace(/^[\s:=-]+/, "").trim();
+  }
+
+  if (!value || value.length > 32) return null;
+  if (looksLikeUrl(value)) return null;
+  if (looksLikePassword(value)) score -= 2;
+  if (!PASSWORD_LABEL_REGEX.test(value)) score += 1;
+  if (!isLikelyNoiseLine(value)) score += 1;
+
+  return { value, score };
 }
 
 function extractHeuristic(lines) {
   const filtered = lines
-    .map((line) => line.replace(/^(ssid|password|pass|mat\s*khau|ten\s*wifi)\s*[:=-]\s*/i, "").trim())
-    .filter(Boolean);
+    .map((line) => sanitizeCandidate(line))
+    .filter(Boolean)
+    .filter((line) => !SSID_LABEL_ONLY_REGEX.test(line) && !PASSWORD_LABEL_ONLY_REGEX.test(line));
 
   if (filtered.length === 0) return null;
 
-  if (filtered.length === 1) {
-    const only = filtered[0];
-    return {
-      ssid: null,
-      password: only,
-      sourceFormat: "single_line",
-      confidence: 0.7,
-    };
-  }
+  let bestPassword = null;
+  let bestSsid = null;
 
-  let password = null;
-  let ssid = null;
-
-  for (const candidate of filtered) {
-    if (!password && looksLikePassword(candidate)) {
-      password = candidate;
-      continue;
+  for (const line of filtered) {
+    const passwordScored = scorePasswordCandidate(line);
+    if (passwordScored && (!bestPassword || passwordScored.score > bestPassword.score)) {
+      bestPassword = passwordScored;
     }
 
-    if (!ssid && candidate.length <= 32) {
-      ssid = candidate;
+    const ssidScored = scoreSsidCandidate(line);
+    if (ssidScored && (!bestSsid || ssidScored.score > bestSsid.score)) {
+      bestSsid = ssidScored;
     }
   }
+
+  const password = bestPassword && bestPassword.score >= 2 ? bestPassword.value : null;
+  const ssid = bestSsid && bestSsid.score >= 1 ? bestSsid.value : null;
+
+  if (!ssid && !password) return null;
 
   return {
     ssid,
     password,
     sourceFormat: "heuristic",
-    confidence: password ? 0.68 : 0.45,
+    confidence: password && ssid ? 0.78 : password ? 0.66 : 0.52,
   };
+}
+
+function computeCandidateScore(candidate) {
+  if (!candidate) return -1;
+  let score = Number(candidate.confidence || 0);
+  if (candidate.ssid) score += 0.35;
+  if (candidate.password) score += 0.35;
+  if (candidate.sourceFormat === "labeled_text") score += 0.05;
+  if (candidate.password && !candidate.ssid) score -= 0.08;
+  return score;
 }
 
 function parseOcrWifiData(ocrText) {
@@ -202,35 +340,18 @@ function parseOcrWifiData(ocrText) {
 
   const lines = normalizeText(raw);
 
-  const twoLine = extractTwoLineSsidPassword(lines);
-  if (twoLine) {
-    return {
-      ok: true,
-      data: {
-        ...twoLine,
-        passwordOnly: Boolean(twoLine.password && !twoLine.ssid),
-      },
-    };
-  }
-
   const labeled = extractFromLabeledLines(lines);
-  if (labeled) {
-    return {
-      ok: true,
-      data: {
-        ...labeled,
-        passwordOnly: Boolean(labeled.password && !labeled.ssid),
-      },
-    };
-  }
+  const twoLine = extractTwoLineSsidPassword(lines);
 
   const heuristic = extractHeuristic(lines);
-  if (heuristic) {
+  const candidates = [labeled, twoLine, heuristic].filter(Boolean);
+  if (candidates.length > 0) {
+    const best = candidates.sort((a, b) => computeCandidateScore(b) - computeCandidateScore(a))[0];
     return {
       ok: true,
       data: {
-        ...heuristic,
-        passwordOnly: Boolean(heuristic.password && !heuristic.ssid),
+        ...best,
+        passwordOnly: Boolean(best.password && !best.ssid),
       },
     };
   }

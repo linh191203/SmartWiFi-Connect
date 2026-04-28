@@ -26,6 +26,7 @@
 - Review screen hiển thị được kết quả OCR/AI
 - Gợi ý SSID hoạt động
 - Lưu local bước đầu thành công
+- Mock API integration test bao phủ parse OCR + AI validate + fuzzy SSID
 
 ### Sprint 4
 - Flow: scan → review → connect → save hoạt động
@@ -60,34 +61,58 @@
 - Không có overlay trắng đục che camera
 - Không tràn viền phải
 - Có xử lý permission denied
+- QR thật được detect bằng ML Kit Barcode Scanning
+- Scan frame có animation vạch trắng chạy lên/xuống
 
 ### ImageScanScreen
 - Chọn ảnh được
 - Chụp ảnh được
 - Hiển thị trạng thái loading OCR
 - Sang Review được
+- CameraX preview hiển thị trong app
+- Capture lấy bitmap từ preview và sang OCR Result
+- Scan frame có animation vạch trắng chạy lên/xuống
 
-### ReviewScreen
+### OCR Result
 - Hiển thị SSID/password
 - Sửa tay được
 - Ẩn/hiện password được
 - Nút connect/save hoạt động đúng luồng
+- Hiển thị AI validation card khi có kết quả
+- Có choices Auto connect / Review thủ công / OCR lại
+- Có thể áp dụng SSID/password normalized từ AI
+- Hiển thị fuzzy SSID suggestion
+- Hiển thị Wi-Fi xung quanh nếu Android cấp quyền Wi-Fi/location
+- Sóng Wi-Fi hiển thị bằng vòng cung, không dùng cột mobile
 
 ### HistoryScreen
 - Lưu local xong thì thấy item
 - Empty state đúng khi chưa có dữ liệu
 - Mở detail được
+- Tab History đọc danh sách từ SQLite thật
 
 ### API
 - `/api/health` trả status 200
 - `/api/ai/validate` trả JSON hợp lệ
+- `/api/v1/ocr/parse` trả JSON parse Wi-Fi hợp lệ
+- `/api/v1/ssid/fuzzy-match` trả fuzzy best match hợp lệ
 - `/api/networks` lưu được dữ liệu hợp lệ
 - Không chấp nhận payload sai format
 
 ---
 
 ## Bug log
-- [ ] Scanner overlay chưa chuẩn
-- [ ] Permission flow cần test kỹ
+- [x] Scanner overlay QR/OCR đã có animation và không che camera
+- [/] Permission flow camera đã ổn; Wi-Fi/location cần test thêm trên thiết bị thật
 - [ ] OCR chưa có bộ ảnh test chuẩn
 - [ ] Build release chưa kiểm tra
+
+---
+
+## Kết quả test đã chạy
+
+### 2026-04-21
+- `:app:compileDebugKotlin` passed
+- `:app:compileDebugAndroidTestKotlin` passed
+- `:app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.example.smartwificonnect.MainViewModelMockApiIntegrationTest` passed
+- `MainViewModelMockApiIntegrationTest` đã bao phủ mock API parse OCR + AI validate + fuzzy SSID

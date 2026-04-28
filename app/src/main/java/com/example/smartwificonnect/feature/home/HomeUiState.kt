@@ -28,11 +28,13 @@ data class RecentNetworkUiModel(
     val name: String,
     val lastConnectedLabel: String,
     val type: RecentNetworkType,
+    val sourceRecordId: Long? = null,
+    val isConnected: Boolean = false,
 )
 
 enum class HomeShortcutType {
     QR,
-    IMAGE,
+    MANUAL,
 }
 
 enum class RecentNetworkType {

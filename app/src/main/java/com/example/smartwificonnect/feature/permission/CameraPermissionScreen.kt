@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
 
 @Composable
@@ -44,6 +45,14 @@ fun CameraPermissionScreen(
     onDenyClick: () -> Unit,
 ) {
     val context = LocalContext.current
+    val dark = LocalAppDarkMode.current
+    val backgroundTop = if (dark) Color(0xFF10131B) else Color(0xFFF7F9FC)
+    val backgroundBottom = if (dark) Color(0xFF171A24) else Color(0xFFEBF2FC)
+    val titleColor = if (dark) Color(0xFFF4F6FB) else Color(0xFF20242E)
+    val bodyColor = if (dark) Color(0xFFABB2C1) else Color(0xFF5E6371)
+    val brandColor = if (dark) Color(0xFF6D70F6) else Color(0xFF474ADB)
+    val secondaryButton = if (dark) Color(0xFF2B3240) else Color(0xFFD9DEE5)
+    val secondaryText = if (dark) Color(0xFFE4E8F0) else Color(0xFF4D5361)
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { isGranted ->
@@ -59,7 +68,7 @@ fun CameraPermissionScreen(
             .fillMaxSize()
             .background(
                 brush = Brush.verticalGradient(
-                    colors = listOf(Color(0xFFF7F9FC), Color(0xFFEBF2FC)),
+                    colors = listOf(backgroundTop, backgroundBottom),
                 ),
             ),
     ) {
@@ -78,7 +87,7 @@ fun CameraPermissionScreen(
 
             Text(
                 text = "Quyền truy cập camera",
-                color = Color(0xFF20242E),
+                color = titleColor,
                 style = androidx.compose.material3.MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.ExtraBold,
                 textAlign = TextAlign.Center,
@@ -86,7 +95,7 @@ fun CameraPermissionScreen(
             Spacer(modifier = Modifier.size(12.dp))
             Text(
                 text = "SmartWiFi-Connect cần quyền truy\ncập camera để quét mã QR.",
-                color = Color(0xFF5E6371),
+                color = bodyColor,
                 style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
@@ -134,7 +143,7 @@ fun CameraPermissionScreen(
                 },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(999.dp),
-                color = Color(0xFF474ADB),
+                color = brandColor,
                 shadowElevation = 8.dp,
             ) {
                 Box(
@@ -156,7 +165,7 @@ fun CameraPermissionScreen(
                 onClick = onDenyClick,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(999.dp),
-                color = Color(0xFFD9DEE5),
+                color = secondaryButton,
             ) {
                 Box(
                     modifier = Modifier.padding(vertical = 14.dp),
@@ -164,7 +173,7 @@ fun CameraPermissionScreen(
                 ) {
                     Text(
                         text = "Không cho phép",
-                        color = Color(0xFF4D5361),
+                        color = secondaryText,
                         style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                     )
@@ -175,7 +184,7 @@ fun CameraPermissionScreen(
 
             Text(
                 text = "CÀI ĐẶT > QUYỀN TRUY CẬP > CAMERA",
-                color = Color(0xFFB2BAC7),
+                color = if (dark) Color(0xFF717B8D) else Color(0xFFB2BAC7),
                 style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.ExtraBold,
             )

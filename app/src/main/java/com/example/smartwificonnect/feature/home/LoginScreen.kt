@@ -52,20 +52,32 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.smartwificonnect.R
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
 
 // ── Design tokens ────────────────────────────────────────────────
-private val BrandPrimary = Color(0xFF4B4FD9)
-private val BrandPrimaryLight = Color(0xFF5B5FEF)
-private val TextDark = Color(0xFF1D2029)
-private val TextMedium = Color(0xFF595E6B)
-private val TextLight = Color(0xFF656A78)
-private val InputBg = Color(0xFFF2F4F7)
-private val InputIconDefault = Color(0xFF8C91A0)
-private val InputIconFocused = Color(0xFF4B4FD9)
-private val ScreenBg = Color(0xFFF7F9FC)
-private val DividerColor = Color(0xFFE0E3E6)
-private val DividerTextColor = Color(0xFFA8A7BC)
+private val BrandPrimary: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF4B4FD9)
+private val BrandPrimaryLight: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF7A7CFF) else Color(0xFF5B5FEF)
+private val TextDark: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFF4F6FB) else Color(0xFF1D2029)
+private val TextMedium: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFABB2C1) else Color(0xFF595E6B)
+private val TextLight: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF9AA3B2) else Color(0xFF656A78)
+private val InputBg: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF2B3240) else Color(0xFFF2F4F7)
+private val InputIconDefault: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8E98AA) else Color(0xFF8C91A0)
+private val InputIconFocused: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF4B4FD9)
+private val ScreenBg: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF7F9FC)
+private val DividerColor: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF2C3342) else Color(0xFFE0E3E6)
+private val DividerTextColor: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF717B8D) else Color(0xFFA8A7BC)
 
 // ── Main screen ──────────────────────────────────────────────────
 

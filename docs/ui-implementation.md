@@ -34,6 +34,11 @@
     - scanning
     - detected
     - error
+- cập nhật 2026-04-21:
+    - dùng `feature/camera/CameraPreview.kt` với CameraX preview thật
+    - dùng ML Kit Barcode Scanning để detect QR
+    - có animation vạch scan trắng chạy lên/xuống trong khung scan
+    - detect QR xong đẩy raw text sang `OCR Result`
 
 ## OnboardingScreen
 - file: `feature/home/OnboardingScreen.kt`
@@ -89,7 +94,9 @@
   - source chip (nguồn OCR)
   - OCR text editor card (editable text + parse button)
   - parsed wifi card (SSID/password/security/confidence)
+  - **AiValidationCard** (AI confidence/suggestion/recommendation)
   - **SsidSuggestionCard** (fuzzy match gợi ý)
+  - danh sách Wi-Fi xung quanh nếu Android cấp quyền Wi-Fi/location
 - state: dùng chung `MainUiState`
 
 ## SsidSuggestionCard
@@ -99,8 +106,42 @@
   - 3 state UI: Loading / Found / NotFound
   - Found: OCR chip (amber) → match chip (green) + confidence bar + 2 CTA
   - NotFound: gentle message + nút "Giữ nguyên"
-  - danh sách mạng gần đây expand/collapse
+  - danh sách Wi-Fi xung quanh expand/collapse
+  - indicator sóng Wi-Fi dạng vòng cung bằng Canvas
 - state:
   - SsidSuggestionState (Hidden/Loading/Found/NotFound)
   - nearbyNetworks list
   - isNearbyExpanded toggle
+
+## ImageScanScreen
+- file: `feature/scanimage/ImageScanScreen.kt`
+- component chính:
+  - top bar máy quét
+  - embedded CameraX preview
+  - frame chụp ảnh OCR
+  - animation vạch scan trắng chạy lên/xuống
+  - action bar: gallery / capture / switch QR
+- state:
+  - preview ready
+  - capture bitmap từ `PreviewView`
+  - capture unavailable
+
+## HistoryScreen
+- file: `feature/history/HistoryScreen.kt`
+- component chính:
+  - top bar `SmartWiFi-Connect`
+  - title/subtitle "Lịch sử kết nối"
+  - filter tabs: Tất cả / Bảo mật / Công cộng
+  - history network cards đọc từ SQLite
+  - analytics card tổng kết lịch sử
+  - bottom navigation fixed, tab `Lịch sử` active
+- state:
+  - `MainUiState.historyRecords`
+  - dữ liệu đọc qua `repository.getSavedWifiHistory()`
+
+## CameraPreview
+- file: `feature/camera/CameraPreview.kt`
+- vai trò:
+  - wrapper CameraX preview dùng chung cho QR scanner và OCR capture
+  - nhận optional analyzer cho QR detection
+  - expose `PreviewView` khi màn chụp ảnh cần lấy bitmap

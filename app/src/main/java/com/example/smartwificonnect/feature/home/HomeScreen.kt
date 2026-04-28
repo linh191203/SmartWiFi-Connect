@@ -35,7 +35,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Apartment
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ChevronRight
-import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.QrCodeScanner
@@ -67,25 +67,43 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
 
-private val ScreenBackground = Color(0xFFF7F9FC)
-private val ScreenBackgroundBottom = Color(0xFFEFF3FB)
-private val SurfaceWhite = Color(0xFFFFFFFF)
-private val SurfaceLow = Color(0xFFF1F4FA)
-private val SurfaceSoft = Color(0xFFE7ECF5)
-private val SurfaceCard = Color(0xFFF4F5F8)
-private val BrandPrimary = Color(0xFF5B5FEF)
-private val BrandPrimaryDark = Color(0xFF474ADB)
-private val BrandPrimarySoft = Color(0xFFC6CBFF)
-private val TextPrimary = Color(0xFF1A1D25)
-private val TextMuted = Color(0xFF707684)
-private val MintCard = Color(0xFF81EFD3)
-private val SkyCard = Color(0xFFD2E7FF)
-private val SecondaryTint = Color(0xFFE7FFF8)
-private val TertiaryTint = Color(0xFFE4F5FF)
-private val BottomNavFill = Color(0xF2FFFFFF)
-private val BottomNavStroke = Color(0xFFF1F5F9)
+private val ScreenBackground: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF7F9FC)
+private val ScreenBackgroundBottom: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF171A24) else Color(0xFFEFF3FB)
+private val SurfaceWhite: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF1F2430) else Color(0xFFFFFFFF)
+private val SurfaceLow: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF252B38) else Color(0xFFF1F4FA)
+private val SurfaceSoft: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF303746) else Color(0xFFE7ECF5)
+private val SurfaceCard: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF1F2430) else Color(0xFFF4F5F8)
+private val BrandPrimary: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF7A7CFF) else Color(0xFF5B5FEF)
+private val BrandPrimaryDark: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFA7A8FF) else Color(0xFF474ADB)
+private val BrandPrimarySoft: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF30337D) else Color(0xFFC6CBFF)
+private val TextPrimary: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFF4F6FB) else Color(0xFF1A1D25)
+private val TextMuted: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFABB2C1) else Color(0xFF707684)
+private val MintCard: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF16483F) else Color(0xFF81EFD3)
+private val SkyCard: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF173545) else Color(0xFFD2E7FF)
+private val SecondaryTint: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF173F38) else Color(0xFFE7FFF8)
+private val TertiaryTint: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF1D334B) else Color(0xFFE4F5FF)
+private val BottomNavFill: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xF21A1F2B) else Color(0xF2FFFFFF)
+private val BottomNavStroke: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF293142) else Color(0xFFF1F5F9)
 private val CameraActionCardHeight = 122.dp
 private val ShortcutActionCardHeight = 138.dp
 
@@ -106,6 +124,8 @@ fun HomeScreen(
     onScanQrClick: () -> Unit,
     onScanImageClick: () -> Unit,
     onManualEntryClick: () -> Unit,
+    onRecentNetworkClick: (RecentNetworkUiModel) -> Unit,
+    onShareClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
@@ -115,7 +135,7 @@ fun HomeScreen(
         bottomBar = {
             HomeBottomBar(
                 onScanClick = onScanQrClick,
-                onShareClick = onManualEntryClick,
+                onShareClick = onShareClick,
                 onHistoryClick = onHistoryClick,
                 onSettingsClick = onSettingsClick,
             )
@@ -178,7 +198,7 @@ fun HomeScreen(
                                 onClick = {
                                     when (shortcut.type) {
                                         HomeShortcutType.QR -> onScanQrClick()
-                                        HomeShortcutType.IMAGE -> onScanImageClick()
+                                        HomeShortcutType.MANUAL -> onManualEntryClick()
                                     }
                                 },
                             )
@@ -190,6 +210,7 @@ fun HomeScreen(
                     RecentNetworksSection(
                         title = state.recentNetworksTitle,
                         items = state.recentNetworks,
+                        onNetworkClick = onRecentNetworkClick,
                     )
                 }
 
@@ -237,7 +258,9 @@ private fun HomeTopBar() {
             }
 
             Surface(
-                modifier = Modifier.size(34.dp),
+                modifier = Modifier
+                    .offset(y = 5.dp)
+                    .size(34.dp),
                 shape = CircleShape,
                 color = Color(0xFFF5E6D9),
                 shadowElevation = 2.dp,
@@ -472,15 +495,15 @@ private fun ShortcutCard(
 ) {
     val tintColor = when (item.type) {
         HomeShortcutType.QR -> SecondaryTint
-        HomeShortcutType.IMAGE -> TertiaryTint
+        HomeShortcutType.MANUAL -> TertiaryTint
     }
     val iconTint = when (item.type) {
         HomeShortcutType.QR -> Color(0xFF27B59A)
-        HomeShortcutType.IMAGE -> Color(0xFF4A8DCF)
+        HomeShortcutType.MANUAL -> BrandPrimaryDark
     }
     val icon = when (item.type) {
         HomeShortcutType.QR -> Icons.Rounded.QrCodeScanner
-        HomeShortcutType.IMAGE -> Icons.Rounded.Image
+        HomeShortcutType.MANUAL -> Icons.Rounded.Link
     }
 
     Surface(
@@ -536,6 +559,7 @@ private fun ShortcutCard(
 private fun RecentNetworksSection(
     title: String,
     items: List<RecentNetworkUiModel>,
+    onNetworkClick: (RecentNetworkUiModel) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(
@@ -569,7 +593,10 @@ private fun RecentNetworksSection(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items.forEach { network ->
-                    NetworkRow(item = network)
+                    NetworkRow(
+                        item = network,
+                        onClick = { onNetworkClick(network) },
+                    )
                 }
             }
         }
@@ -577,7 +604,10 @@ private fun RecentNetworksSection(
 }
 
 @Composable
-private fun NetworkRow(item: RecentNetworkUiModel) {
+private fun NetworkRow(
+    item: RecentNetworkUiModel,
+    onClick: () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -586,7 +616,7 @@ private fun NetworkRow(item: RecentNetworkUiModel) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { }
+                .clickable(onClick = onClick)
                 .padding(horizontal = 12.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -614,12 +644,25 @@ private fun NetworkRow(item: RecentNetworkUiModel) {
                     style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.ExtraBold,
                 )
-                Text(
-                    text = item.lastConnectedLabel,
-                    color = TextMuted,
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = item.lastConnectedLabel,
+                        color = TextMuted,
+                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (item.isConnected) {
+                        Text(
+                            text = "Đang dùng",
+                            color = BrandPrimary,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                }
             }
 
             Icon(
@@ -998,6 +1041,8 @@ private fun HomeScreenPreview() {
             onScanQrClick = {},
             onScanImageClick = {},
             onManualEntryClick = {},
+            onRecentNetworkClick = {},
+            onShareClick = {},
             onHistoryClick = {},
             onSettingsClick = {},
         )

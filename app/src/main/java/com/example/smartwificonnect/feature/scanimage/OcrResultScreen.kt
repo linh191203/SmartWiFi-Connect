@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,14 +17,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Cancel
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.DocumentScanner
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -36,8 +44,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.smartwificonnect.AiValidationState
 import com.example.smartwificonnect.MainUiState
+import com.example.smartwificonnect.WifiConnectionState
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
+
+private val OcrBackground: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF6F8FC)
+private val OcrSurface: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF1F2430) else Color.White
+private val OcrSoftSurface: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF252B38) else Color(0xFFF0F2F7)
+private val OcrBrand: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF4451D7)
+private val OcrTitle: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFF4F6FB) else Color(0xFF222630)
+private val OcrBody: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFABB2C1) else Color(0xFF6A7386)
 
 @Composable
 fun OcrResultScreen(
@@ -49,30 +73,37 @@ fun OcrResultScreen(
     onDismissSuggestion: () -> Unit = {},
     onToggleNearby: () -> Unit = {},
     onSelectNetwork: (String) -> Unit = {},
+    onUseAiSsid: () -> Unit = {},
+    onUseAiPassword: () -> Unit = {},
+    onConnectWifi: () -> Unit = {},
 ) {
     Scaffold(
-        containerColor = Color(0xFFF6F8FC),
+        containerColor = OcrBackground,
         topBar = {
-            Surface(shadowElevation = 1.dp) {
+            Surface(
+                color = OcrBackground,
+                shadowElevation = 1.dp,
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                        .padding(horizontal = 8.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onBackClick) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Quay lại",
-                            tint = Color(0xFF4451D7),
+                            tint = OcrBrand,
                         )
                     }
                     Text(
-                        text = "OCR Result",
-                        style = MaterialTheme.typography.headlineSmall,
+                        text = "Kết quả quét ảnh",
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF222630),
+                        color = OcrTitle,
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
@@ -93,75 +124,127 @@ fun OcrResultScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                val isDetected = state.ocrText.isNotBlank() ||
+                    state.ssid.isNotBlank() ||
+                    state.password.isNotBlank()
                 item {
-                    InfoBanner(
-                        title = "OCR da san sang",
-                        body = state.statusMessage,
-                    )
+                    RecognitionStatusBanner(isDetected = isDetected)
                 }
 
-                if (state.scanSource.isNotBlank()) {
-                    item {
-                        SourceChip(source = state.scanSource)
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Văn bản nhận diện được",
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF1E232D),
+                        )
+                        Text(
+                            text = "Sửa lỗi nếu cần trước khi tiếp tục.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = OcrBody,
+                        )
                     }
                 }
 
                 item {
                     Card(
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        shape = RoundedCornerShape(26.dp),
+                        colors = CardDefaults.cardColors(containerColor = OcrSoftSurface),
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(20.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                             ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.DocumentScanner,
-                                    contentDescription = null,
-                                    tint = Color(0xFF4451D7),
-                                )
                                 Text(
-                                    text = "Text OCR",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.ExtraBold,
+                                    text = "Nội dung OCR",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Color(0xFF4A5264),
+                                    fontWeight = FontWeight.Bold,
+                                )
+                                Icon(
+                                    imageVector = Icons.Outlined.Edit,
+                                    contentDescription = "Chỉnh sửa OCR",
+                                    tint = Color(0xFF8E95FF),
                                 )
                             }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Text(
-                                text = "Ban co the sua text OCR truoc khi parse qua BE.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFF5B6272),
-                            )
-
-                            Spacer(modifier = Modifier.height(14.dp))
 
                             OutlinedTextField(
                                 value = state.ocrText,
                                 onValueChange = onOcrTextChange,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(220.dp),
+                                    .heightIn(min = 180.dp),
                                 shape = RoundedCornerShape(18.dp),
-                                label = { Text("Nội dung OCR") },
-                                placeholder = { Text("OCR text se hien o day") },
+                                placeholder = { Text("WiFi Name: ...") },
                             )
-
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            Button(
-                                onClick = onParseClick,
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = state.ocrText.isNotBlank(),
-                            ) {
-                                Text("Parse voi server")
+                            if (state.scanSource.isNotBlank()) {
+                                SourceChip(source = state.scanSource)
                             }
+                        }
+                    }
+                }
+
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color(0xFFE8F4FF),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Info,
+                                contentDescription = null,
+                                tint = Color(0xFF0F7CA6),
+                            )
+                            Text(
+                                text = "Vui lòng kiểm tra lại thông tin mạng trước khi phân tích.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF0F6C8F),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
+
+                item {
+                    Button(
+                        onClick = onParseClick,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = state.ocrText.isNotBlank(),
+                        shape = RoundedCornerShape(999.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF4B4BE3),
+                            contentColor = OcrSurface,
+                        ),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.DocumentScanner,
+                                contentDescription = null,
+                            )
+                            Text(
+                                text = "Phân tích & Kết nối",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                            )
                         }
                     }
                 }
@@ -170,7 +253,22 @@ fun OcrResultScreen(
                     if (state.ssid.isBlank() && state.password.isBlank()) {
                         EmptyParsedState()
                     } else {
-                        ParsedWifiCard(state = state)
+                        ParsedWifiCard(
+                            state = state,
+                            onConnectWifi = onConnectWifi,
+                        )
+                    }
+                }
+
+                if (state.aiValidation !is AiValidationState.Hidden) {
+                    item {
+                        AiValidationCard(
+                            aiState = state.aiValidation,
+                            parsedSsid = state.ssid,
+                            parsedPassword = state.password,
+                            onUseAiSsid = onUseAiSsid,
+                            onUseAiPassword = onUseAiPassword,
+                        )
                     }
                 }
 
@@ -181,6 +279,7 @@ fun OcrResultScreen(
                             state = state.ssidSuggestion,
                             ocrSsid = state.ssid,
                             nearbyNetworks = state.nearbyNetworks,
+                            nearbyStatus = state.nearbyWifiStatus,
                             isNearbyExpanded = state.isNearbyExpanded,
                             onAcceptSuggestion = onAcceptSuggestion,
                             onDismiss = onDismissSuggestion,
@@ -195,19 +294,184 @@ fun OcrResultScreen(
 }
 
 @Composable
+private fun RecognitionStatusBanner(isDetected: Boolean) {
+    val icon = if (isDetected) Icons.Outlined.CheckCircle else Icons.Outlined.Cancel
+    val text = if (isDetected) "Nhận diện thành công" else "Nhận diện không thành công"
+    val tint = if (isDetected) OcrBrand else Color(0xFFB3261E)
+    val bg = if (isDetected) Color(0xFFEAF0FF) else Color(0xFFFDECEC)
+
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = bg,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+            )
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = tint,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiValidationCard(
+    aiState: AiValidationState,
+    parsedSsid: String,
+    parsedPassword: String,
+    onUseAiSsid: () -> Unit,
+    onUseAiPassword: () -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = OcrSurface),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "AI Validation",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = OcrTitle,
+            )
+
+            when (aiState) {
+                AiValidationState.Loading -> {
+                    Text(
+                        text = "Dang danh gia ket qua OCR...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = OcrBody,
+                    )
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = OcrBrand,
+                    )
+                }
+
+                is AiValidationState.Failed -> {
+                    Text(
+                        text = "Khong lay duoc AI review: ${aiState.message}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFB3261E),
+                    )
+                }
+
+                is AiValidationState.Ready -> {
+                    val confidencePercent = (aiState.confidence * 100).toInt().coerceIn(0, 100)
+                    Text(
+                        text = "Do tin cay AI: $confidencePercent%",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF223159),
+                    )
+                    LinearProgressIndicator(
+                        progress = { aiState.confidence.toFloat() },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = if (aiState.shouldAutoConnect) Color(0xFF2E7D32) else OcrBrand,
+                        trackColor = Color(0xFFDDE3F5),
+                    )
+                    Text(
+                        text = aiState.suggestion,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = OcrBody,
+                    )
+                    ChoiceRow(recommendation = aiState.recommendation)
+
+                    if (aiState.flags.isNotEmpty()) {
+                        Text(
+                            text = "Flags: ${aiState.flags.joinToString(", ")}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF7D8597),
+                        )
+                    }
+
+                    val aiSsid = aiState.normalizedSsid.orEmpty()
+                    if (aiSsid.isNotBlank() && !aiSsid.equals(parsedSsid, ignoreCase = true)) {
+                        OutlinedButton(
+                            onClick = onUseAiSsid,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Dung SSID AI: $aiSsid")
+                        }
+                    }
+
+                    val aiPassword = aiState.normalizedPassword.orEmpty()
+                    if (aiPassword.isNotBlank() && aiPassword != parsedPassword) {
+                        OutlinedButton(
+                            onClick = onUseAiPassword,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Dung password AI")
+                        }
+                    }
+                }
+
+                AiValidationState.Hidden -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChoiceRow(recommendation: String) {
+    val normalized = recommendation.trim().lowercase()
+    val choices = listOf(
+        "connect" to "Auto connect",
+        "review" to "Review thu cong",
+        "retry_ocr" to "OCR lai",
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        choices.forEach { (value, label) ->
+            val selected = normalized == value
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = if (selected) OcrBrand else OcrSoftSurface,
+            ) {
+                Text(
+                    text = label,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) OcrSurface else Color(0xFF556070),
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun LoadingState(
     modifier: Modifier = Modifier,
     message: String,
 ) {
     Box(
-        modifier = modifier.background(Color(0xFFF6F8FC)),
+        modifier = modifier.background(OcrBackground),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            CircularProgressIndicator(color = Color(0xFF4451D7))
+            CircularProgressIndicator(color = OcrBrand)
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = message,
@@ -253,13 +517,13 @@ private fun InfoBanner(
 private fun SourceChip(source: String) {
     Surface(
         shape = RoundedCornerShape(999.dp),
-        color = Color(0xFFF0E7DA),
+        color = Color(0xFFE4E8F9),
     ) {
         Text(
             text = "Nguon OCR: $source",
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
             style = MaterialTheme.typography.labelLarge,
-            color = Color(0xFF7B5A2D),
+            color = Color(0xFF3F4FA8),
             fontWeight = FontWeight.Bold,
         )
     }
@@ -269,7 +533,7 @@ private fun SourceChip(source: String) {
 private fun EmptyParsedState() {
     Card(
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = OcrSurface),
     ) {
         Column(
             modifier = Modifier
@@ -280,20 +544,20 @@ private fun EmptyParsedState() {
             Icon(
                 imageVector = Icons.Outlined.AutoAwesome,
                 contentDescription = null,
-                tint = Color(0xFF4451D7),
+                tint = OcrBrand,
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = "Chưa có dữ liệu parse",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF272C37),
+                color = OcrTitle,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "Sau khi bam Parse voi server, SSID va mat khau se hien o day.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF62697A),
+                color = OcrBody,
                 textAlign = TextAlign.Center,
             )
         }
@@ -301,10 +565,14 @@ private fun EmptyParsedState() {
 }
 
 @Composable
-private fun ParsedWifiCard(state: MainUiState) {
+private fun ParsedWifiCard(
+    state: MainUiState,
+    onConnectWifi: () -> Unit,
+) {
+    val isConnecting = state.wifiConnectionState is WifiConnectionState.Connecting
     Card(
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = OcrSurface),
     ) {
         Column(
             modifier = Modifier
@@ -316,13 +584,94 @@ private fun ParsedWifiCard(state: MainUiState) {
                 text = "Parsed Wi-Fi",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF272C37),
+                color = OcrTitle,
             )
             WifiInfoRow(label = "SSID", value = state.ssid)
             WifiInfoRow(label = "Password", value = state.password)
             WifiInfoRow(label = "Security", value = state.security)
             WifiInfoRow(label = "Source", value = state.sourceFormat)
             WifiInfoRow(label = "Confidence", value = state.confidence?.toString().orEmpty())
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Button(
+                onClick = onConnectWifi,
+                modifier = Modifier.fillMaxWidth(),
+                enabled = state.ssid.isNotBlank() && !isConnecting,
+            ) {
+                Text(
+                    if (isConnecting) "Dang ket noi Wi-Fi..." else "Ket noi Wi-Fi ",
+                )
+            }
+
+            WifiConnectionStatus(state = state.wifiConnectionState)
+        }
+    }
+}
+
+@Composable
+private fun WifiConnectionStatus(state: WifiConnectionState) {
+    when (state) {
+        WifiConnectionState.Idle -> Unit
+
+        is WifiConnectionState.Connecting -> {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFEAF0FF),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.height(18.dp),
+                        strokeWidth = 2.dp,
+                        color = OcrBrand,
+                    )
+                    Text(
+                        text = "Dang ket noi toi ${state.ssid} ...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFF2E3E71),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+
+        is WifiConnectionState.Connected -> {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFE6F6EE),
+            ) {
+                Text(
+                    text = "Ket noi thanh cong: ${state.ssid}",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF146C43),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        is WifiConnectionState.Failed -> {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFFDECEC),
+            ) {
+                Text(
+                    text = state.message,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFF9B1C1C),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
     }
 }
@@ -336,13 +685,13 @@ private fun WifiInfoRow(
         Text(
             text = label,
             style = MaterialTheme.typography.labelLarge,
-            color = Color(0xFF657089),
+            color = OcrBody,
             fontWeight = FontWeight.Bold,
         )
         Text(
             text = if (value.isBlank()) "-" else value,
             style = MaterialTheme.typography.titleMedium,
-            color = Color(0xFF20242D),
+            color = OcrTitle,
         )
     }
 }
@@ -361,6 +710,16 @@ private fun OcrResultScreenPreview() {
                 confidence = 0.98,
                 scanSource = "Thu vien anh",
                 statusMessage = "Da nhan OCR. Ban co the sua text truoc khi parse.",
+                aiValidation = AiValidationState.Ready(
+                    validated = true,
+                    confidence = 0.87,
+                    suggestion = "Du lieu kha on, nen review nhanh roi ket noi.",
+                    flags = listOf("ocr_ambiguous_characters"),
+                    recommendation = "review",
+                    shouldAutoConnect = false,
+                    normalizedSsid = "Cafe_WiFi_5G",
+                    normalizedPassword = "12345678",
+                ),
                 ssidSuggestion = com.example.smartwificonnect.SsidSuggestionState.Found(
                     bestMatch = "Cafe_WiFi_5G",
                     score = 0.92,

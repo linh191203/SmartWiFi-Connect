@@ -1,5 +1,13 @@
 package com.example.smartwificonnect.feature.scanimage
 
+import android.graphics.Bitmap
+import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -32,6 +40,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,7 +55,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.smartwificonnect.feature.camera.CameraPreview
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
+
+private val ImageScanBackground: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF7F9FC)
+private val ImageScanBar: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xF21A1F2B) else Color(0xFFF7F8FB)
+private val ImageScanBarStroke: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF293142) else Color(0xFFE6E9EF)
+private val ImageScanBrand: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF5A63F5)
+private val ImageScanText: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFE4E8F0) else Color(0xFF1B1E25)
 
 enum class ImageScanBottomTab(
     val label: String,
@@ -60,7 +85,8 @@ enum class ImageScanBottomTab(
 fun ImageScanScreen(
     onCloseClick: () -> Unit,
     onFlashClick: () -> Unit,
-    onCaptureClick: () -> Unit,
+    onCaptureClick: (Bitmap) -> Unit,
+    onCaptureUnavailable: () -> Unit,
     onSwitchToQrClick: () -> Unit,
     onOpenGalleryClick: () -> Unit,
     onHomeClick: () -> Unit,
@@ -70,6 +96,7 @@ fun ImageScanScreen(
     onSettingsClick: () -> Unit,
     activeTab: ImageScanBottomTab = ImageScanBottomTab.SCAN,
 ) {
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
     val tabs = listOf(
         ImageScanBottomTab.HOME,
         ImageScanBottomTab.SCAN,
@@ -91,7 +118,7 @@ fun ImageScanScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7F9FC)),
+            .background(ImageScanBackground),
     ) {
         ImageScanTopBar(
             onCloseClick = onCloseClick,
@@ -104,6 +131,15 @@ fun ImageScanScreen(
                 .fillMaxWidth()
                 .background(Color(0xFF565656)),
         ) {
+            CameraPreview(
+                modifier = Modifier.matchParentSize(),
+                onPreviewReady = { previewView = it },
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color(0x33000000)),
+            )
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -124,7 +160,14 @@ fun ImageScanScreen(
 
                 ImageScanActionBar(
                     onOpenGalleryClick = onOpenGalleryClick,
-                    onCaptureClick = onCaptureClick,
+                    onCaptureClick = {
+                        val bitmap = previewView?.bitmap
+                        if (bitmap == null) {
+                            onCaptureUnavailable()
+                        } else {
+                            onCaptureClick(bitmap)
+                        }
+                    },
                     onSwitchToQrClick = onSwitchToQrClick,
                 )
 
@@ -147,7 +190,7 @@ private fun ImageScanTopBar(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = Color(0xFFF7F9FC),
+        color = ImageScanBackground,
         shadowElevation = 1.dp,
     ) {
         Row(
@@ -164,14 +207,14 @@ private fun ImageScanTopBar(
                 Icon(
                     imageVector = Icons.Outlined.Close,
                     contentDescription = "Đóng",
-                    tint = Color(0xFF5A63F5),
+                    tint = ImageScanBrand,
                     modifier = Modifier
                         .size(24.dp)
                         .clickable(onClick = onCloseClick),
                 )
                 Text(
                     text = "Máy quét",
-                    color = Color(0xFF5A63F5),
+                    color = ImageScanBrand,
                     style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold,
                 )
@@ -193,7 +236,7 @@ private fun ImageScanTopBar(
                     modifier = Modifier.size(38.dp),
                     shape = CircleShape,
                     color = Color(0xFFF5E3D4),
-                    border = BorderStroke(2.dp, Color(0xFF5A63F5)),
+                    border = BorderStroke(2.dp, ImageScanBrand),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
@@ -218,6 +261,11 @@ private fun ImageScanFrame(modifier: Modifier = Modifier) {
                 .clip(RoundedCornerShape(34.dp))
                 .background(Color(0xFFF6F7FA).copy(alpha = 0.70f)),
         )
+        AnimatedScanLine(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(34.dp)),
+        )
         Canvas(modifier = Modifier.fillMaxSize()) {
             val corner = size.width * 0.18f
             val stroke = 6f
@@ -239,6 +287,53 @@ private fun ImageScanFrame(modifier: Modifier = Modifier) {
             drawLine(white, androidx.compose.ui.geometry.Offset(corner - whiteLen, size.height), androidx.compose.ui.geometry.Offset(corner + whiteLen, size.height), strokeWidth = stroke, cap = StrokeCap.Round)
             drawLine(white, androidx.compose.ui.geometry.Offset(size.width - corner - whiteLen, size.height), androidx.compose.ui.geometry.Offset(size.width - corner + whiteLen, size.height), strokeWidth = stroke, cap = StrokeCap.Round)
         }
+    }
+}
+
+@Composable
+private fun AnimatedScanLine(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "imageScanLineTransition")
+    val progress by transition.animateFloat(
+        initialValue = 0.08f,
+        targetValue = 0.92f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1700, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "imageScanLineProgress",
+    )
+
+    Canvas(modifier = modifier) {
+        val y = size.height * progress
+        val horizontalPadding = size.width * 0.11f
+        val glowHeight = 56f
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.Transparent,
+                    Color(0x3DFFFFFF),
+                    Color.Transparent,
+                ),
+                startY = y - glowHeight / 2f,
+                endY = y + glowHeight / 2f,
+            ),
+            topLeft = androidx.compose.ui.geometry.Offset(horizontalPadding, y - glowHeight / 2f),
+            size = androidx.compose.ui.geometry.Size(size.width - horizontalPadding * 2f, glowHeight),
+        )
+        drawLine(
+            color = Color(0x7AFFFFFF),
+            start = androidx.compose.ui.geometry.Offset(horizontalPadding, y),
+            end = androidx.compose.ui.geometry.Offset(size.width - horizontalPadding, y),
+            strokeWidth = 12f,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = Color.White,
+            start = androidx.compose.ui.geometry.Offset(horizontalPadding + 8f, y),
+            end = androidx.compose.ui.geometry.Offset(size.width - horizontalPadding - 8f, y),
+            strokeWidth = 4f,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
@@ -340,7 +435,7 @@ private fun CaptureActionButton(onClick: () -> Unit) {
             Surface(
                 modifier = Modifier.size(40.dp),
                 shape = CircleShape,
-                color = Color(0xFF5A63F5),
+                color = ImageScanBrand,
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(
@@ -364,8 +459,8 @@ private fun ImageScanBottomBar(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
-        color = Color(0xFFF7F8FB),
-        border = BorderStroke(1.dp, Color(0xFFE6E9EF)),
+        color = ImageScanBar,
+        border = BorderStroke(1.dp, ImageScanBarStroke),
     ) {
         Row(
             modifier = Modifier
@@ -396,7 +491,7 @@ private fun ImageScanBottomItem(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color(0xFF5A63F5) else Color.Transparent)
+            .background(if (selected) ImageScanBrand else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp, vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -405,13 +500,13 @@ private fun ImageScanBottomItem(
         Icon(
             imageVector = item.icon,
             contentDescription = item.label,
-            tint = if (selected) Color.White else Color(0xFF1B1E25),
+            tint = if (selected) Color.White else ImageScanText,
             modifier = Modifier.size(21.dp),
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = item.label,
-            color = if (selected) Color.White else Color(0xFF1B1E25),
+            color = if (selected) Color.White else ImageScanText,
             style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
@@ -427,7 +522,8 @@ private fun ImageScanScreenPreview() {
         ImageScanScreen(
             onCloseClick = {},
             onFlashClick = {},
-            onCaptureClick = {},
+            onCaptureClick = { _ -> },
+            onCaptureUnavailable = {},
             onSwitchToQrClick = {},
             onOpenGalleryClick = {},
             onHomeClick = {},
@@ -438,4 +534,3 @@ private fun ImageScanScreenPreview() {
         )
     }
 }
-

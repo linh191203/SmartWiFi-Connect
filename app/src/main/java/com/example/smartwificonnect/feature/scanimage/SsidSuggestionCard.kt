@@ -12,6 +12,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,7 +33,6 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.SignalWifi4Bar
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material3.Button
@@ -52,8 +52,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,6 +90,7 @@ fun SsidSuggestionCard(
     state: SsidSuggestionState,
     ocrSsid: String,
     nearbyNetworks: List<NearbyNetwork>,
+    nearbyStatus: String = "",
     isNearbyExpanded: Boolean,
     onAcceptSuggestion: () -> Unit,
     onDismiss: () -> Unit,
@@ -113,10 +117,13 @@ fun SsidSuggestionCard(
         if (nearbyNetworks.isNotEmpty()) {
             NearbyNetworksList(
                 networks = nearbyNetworks,
+                status = nearbyStatus,
                 isExpanded = isNearbyExpanded,
                 onToggle = onToggleNearby,
                 onSelect = onSelectNetwork,
             )
+        } else if (nearbyStatus.isNotBlank()) {
+            NearbyWifiStatusCard(status = nearbyStatus)
         }
     }
 }
@@ -434,7 +441,7 @@ private fun SuggestionNotFound(onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.SignalWifi4Bar,
+                    imageVector = Icons.Outlined.Wifi,
                     contentDescription = null,
                     tint = Color(0xFFBDBDBD),
                     modifier = Modifier.size(36.dp),
@@ -476,6 +483,7 @@ private fun SuggestionNotFound(onDismiss: () -> Unit) {
 @Composable
 private fun NearbyNetworksList(
     networks: List<NearbyNetwork>,
+    status: String,
     isExpanded: Boolean,
     onToggle: () -> Unit,
     onSelect: (String) -> Unit,
@@ -510,7 +518,7 @@ private fun NearbyNetworksList(
                         modifier = Modifier.size(20.dp),
                     )
                     Text(
-                        text = "Xem tất cả mạng gần đây (${networks.size})",
+                        text = "Wi-Fi xung quanh (${networks.size})",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF3B4151),
@@ -533,6 +541,15 @@ private fun NearbyNetworksList(
                         modifier = Modifier.padding(horizontal = 20.dp),
                         color = Color(0xFFF0F0F0),
                     )
+                    if (status.isNotBlank()) {
+                        Text(
+                            text = status,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF6B7280),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
                     networks.forEach { network ->
                         NearbyNetworkItem(
                             network = network,
@@ -541,6 +558,36 @@ private fun NearbyNetworksList(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun NearbyWifiStatusCard(status: String) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Wifi,
+                contentDescription = null,
+                tint = PrimaryBlue,
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                text = status,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF5B6272),
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }
@@ -588,18 +635,44 @@ private fun NearbyNetworkItem(
             )
         }
 
-        // Signal level dots
-        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            repeat(4) { index ->
-                Box(
-                    modifier = Modifier
-                        .size(width = 4.dp, height = (8 + index * 4).dp)
-                        .background(
-                            color = if (index < network.signalLevel) PrimaryBlue else BarTrack,
-                            shape = RoundedCornerShape(2.dp),
-                        ),
-                )
-            }
+        WifiSignalArcs(signalLevel = network.signalLevel)
+    }
+}
+
+@Composable
+private fun WifiSignalArcs(
+    signalLevel: Int,
+    modifier: Modifier = Modifier,
+) {
+    val activeLevel = signalLevel.coerceIn(0, 4)
+    Canvas(modifier = modifier.size(34.dp)) {
+        val centerX = size.width / 2f
+        val baseY = size.height * 0.78f
+        val strokeWidth = 3.2.dp.toPx()
+        val dotColor = if (activeLevel >= 1) PrimaryBlue else BarTrack
+
+        drawCircle(
+            color = dotColor,
+            radius = 2.7.dp.toPx(),
+            center = Offset(centerX, baseY),
+        )
+
+        val arcWidths = listOf(14.dp.toPx(), 23.dp.toPx(), 32.dp.toPx())
+        arcWidths.forEachIndexed { index, arcWidth ->
+            val arcLevel = index + 2
+            val color = if (activeLevel >= arcLevel) PrimaryBlue else BarTrack
+            drawArc(
+                color = color,
+                startAngle = 220f,
+                sweepAngle = 100f,
+                useCenter = false,
+                topLeft = Offset(
+                    x = centerX - arcWidth / 2f,
+                    y = baseY - arcWidth / 2f,
+                ),
+                size = Size(arcWidth, arcWidth),
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+            )
         }
     }
 }

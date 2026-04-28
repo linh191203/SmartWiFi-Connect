@@ -20,10 +20,43 @@ class DefaultWifiRepository(context: Context) : WifiRepository {
             .parseOcr(OcrParseRequest(ocrText = ocrText))
     }
 
+    override suspend fun validateAi(
+        baseUrl: String,
+        ssid: String?,
+        password: String?,
+        ocrText: String,
+    ): ApiEnvelope<AiValidateData> {
+        return ApiClient.getService(baseUrl, enableDebugLogs = BuildConfig.DEBUG)
+            .validateAi(
+                AiValidateRequest(
+                    ssid = ssid,
+                    password = password,
+                    ocrText = ocrText,
+                ),
+            )
+    }
+
+    override suspend fun fuzzyMatchSsid(
+        baseUrl: String,
+        ocrSsid: String,
+        nearbyNetworks: List<FuzzyNetworkPayload>,
+    ): ApiEnvelope<SsidFuzzyMatchData> {
+        return ApiClient.getService(baseUrl, enableDebugLogs = BuildConfig.DEBUG)
+            .fuzzyMatchSsid(
+                SsidFuzzyMatchRequest(
+                    ocrSsid = ocrSsid,
+                    nearbyNetworks = nearbyNetworks,
+                ),
+            )
+    }
+
     override suspend fun saveParsedWifi(
         baseUrl: String,
         ocrText: String,
         parsedWifiData: ParsedWifiData,
+        aiValidateData: AiValidateData?,
+        fuzzyBestMatch: String?,
+        fuzzyScore: Double?,
     ): SavedWifiRecord = withContext(Dispatchers.IO) {
         dbHelper.insert(
             SavedWifiRecordDraft(
@@ -33,11 +66,62 @@ class DefaultWifiRepository(context: Context) : WifiRepository {
                 password = parsedWifiData.password.orEmpty(),
                 sourceFormat = parsedWifiData.sourceFormat.orEmpty(),
                 confidence = parsedWifiData.confidence,
+                aiConfidence = aiValidateData?.confidence,
+                aiSuggestion = aiValidateData?.suggestion.orEmpty(),
+                aiRecommendation = aiValidateData?.parseRecommendation.orEmpty(),
+                aiShouldAutoConnect = aiValidateData?.shouldAutoConnect == true,
+                aiFlags = aiValidateData?.flags.orEmpty(),
+                fuzzyBestMatch = fuzzyBestMatch,
+                fuzzyScore = fuzzyScore,
+            ),
+        )
+    }
+
+    override suspend fun saveConnectedNetwork(
+        baseUrl: String,
+        request: SaveNetworkRequest,
+    ): Boolean {
+        val response = ApiClient.getService(baseUrl, enableDebugLogs = BuildConfig.DEBUG)
+            .saveNetwork(request)
+        return response.isSuccessful
+    }
+
+    override suspend fun saveConnectedNetworkLocal(
+        baseUrl: String,
+        ocrText: String,
+        ssid: String,
+        password: String?,
+        sourceFormat: String?,
+        confidence: Double?,
+    ): SavedWifiRecord = withContext(Dispatchers.IO) {
+        dbHelper.insert(
+            SavedWifiRecordDraft(
+                baseUrl = baseUrl.trim(),
+                ocrText = ocrText,
+                ssid = ssid,
+                password = password.orEmpty(),
+                sourceFormat = sourceFormat.orEmpty().ifBlank { "connected_manual" },
+                confidence = confidence,
+                aiConfidence = null,
+                aiSuggestion = "",
+                aiRecommendation = "",
+                aiShouldAutoConnect = false,
+                aiFlags = emptyList(),
+                fuzzyBestMatch = null,
+                fuzzyScore = null,
             ),
         )
     }
 
     override suspend fun getLatestSavedWifi(): SavedWifiRecord? = withContext(Dispatchers.IO) {
         dbHelper.getLatest()
+    }
+
+    override suspend fun getSavedWifiHistory(): List<SavedWifiRecord> = withContext(Dispatchers.IO) {
+        dbHelper.getAll()
+    }
+
+    override suspend fun deleteSavedWifiRecord(id: Long): Boolean = withContext(Dispatchers.IO) {
+        dbHelper.deleteById(id)
     }
 }

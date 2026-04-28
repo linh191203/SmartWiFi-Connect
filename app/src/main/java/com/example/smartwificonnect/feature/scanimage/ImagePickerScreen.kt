@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
 
 private data class PickerImageItem(
@@ -58,6 +59,17 @@ private data class PickerBottomTab(
     val label: String,
     val icon: ImageVector,
 )
+
+private val PickerBackground: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF7F9FC)
+private val PickerSurface: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF1F2430) else Color(0xFFF8F9FC)
+private val PickerTitle: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFF4F6FB) else Color(0xFF222630)
+private val PickerMuted: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFABB2C1) else Color(0xFF707788)
+private val PickerBrand: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF5A63F5)
 
 @Composable
 fun ImagePickerScreen(
@@ -89,7 +101,7 @@ fun ImagePickerScreen(
     val canContinue = selectedImageId != null
 
     Scaffold(
-        containerColor = Color(0xFFF7F9FC),
+        containerColor = PickerBackground,
         topBar = {
             PickerTopBar(
                 onBackClick = onBackClick,
@@ -150,7 +162,7 @@ private fun PickerTopBar(
     canContinue: Boolean,
     onContinueClick: () -> Unit,
 ) {
-    Surface(color = Color(0xFFF7F9FC), shadowElevation = 1.dp) {
+    Surface(color = PickerBackground, shadowElevation = 1.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -165,14 +177,14 @@ private fun PickerTopBar(
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = "Quay lại",
-                    tint = Color(0xFF5A63F5),
+                    tint = PickerBrand,
                     modifier = Modifier
                         .size(22.dp)
                         .clickable(onClick = onBackClick),
                 )
                 Text(
                     text = "Chọn ảnh",
-                    color = Color(0xFF222630),
+                    color = PickerTitle,
                     style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.ExtraBold,
                 )
@@ -181,11 +193,11 @@ private fun PickerTopBar(
             Surface(
                 onClick = onContinueClick,
                 shape = RoundedCornerShape(999.dp),
-                color = if (canContinue) Color(0xFF5159E8) else Color(0xFFC8CDDA),
+                color = if (canContinue) PickerBrand else Color(0xFFC8CDDA),
             ) {
                 Text(
                     text = "Tiếp tục",
-                    color = if (canContinue) Color.White else Color(0xFF707788),
+                    color = if (canContinue) Color.White else PickerMuted,
                     style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.ExtraBold,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 9.dp),
@@ -201,7 +213,7 @@ private fun PickerFilterChips() {
         item {
             Surface(
                 shape = RoundedCornerShape(999.dp),
-                color = Color(0xFF5A63F5),
+                color = PickerBrand,
             ) {
                 Text(
                     text = "Tất\ncả\nảnh",
@@ -245,7 +257,7 @@ private fun SectionHeader(
         if (action != null) {
             Text(
                 text = action,
-                color = Color(0xFF5A63F5),
+                color = PickerBrand,
                 style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.ExtraBold,
             )
@@ -308,7 +320,7 @@ private fun ImageCell(
                     .fillMaxSize(),
                 shape = shape,
                 color = Color.Transparent,
-                border = BorderStroke(5.dp, Color(0xFF5A63F5)),
+                border = BorderStroke(5.dp, PickerBrand),
             ) {}
         }
         Surface(
@@ -317,7 +329,7 @@ private fun ImageCell(
                 .size(22.dp)
                 .align(Alignment.TopEnd),
             shape = CircleShape,
-            color = if (selected) Color(0xFF5A63F5) else Color(0x33000000),
+            color = if (selected) PickerBrand else Color(0x33000000),
             border = BorderStroke(2.dp, Color.White.copy(alpha = 0.92f)),
         ) {
             Box(contentAlignment = Alignment.Center) {
@@ -343,7 +355,7 @@ private fun PickerBottomBar() {
     )
 
     Surface(
-        color = Color(0xFFF8F9FC),
+        color = PickerSurface,
         border = BorderStroke(1.dp, Color(0xFFE8EBF2)),
     ) {
         Row(
@@ -365,13 +377,13 @@ private fun PickerBottomBar() {
                     Icon(
                         imageVector = tab.icon,
                         contentDescription = tab.label,
-                        tint = if (selected) Color(0xFF5A63F5) else Color(0xFF9AA1B0),
+                        tint = if (selected) PickerBrand else Color(0xFF9AA1B0),
                         modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
                         text = tab.label,
-                        color = if (selected) Color(0xFF5A63F5) else Color(0xFF9AA1B0),
+                        color = if (selected) PickerBrand else Color(0xFF9AA1B0),
                         style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,

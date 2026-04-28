@@ -16,9 +16,9 @@ object HomePreviewData {
                 type = HomeShortcutType.QR,
             ),
             HomeShortcutUiModel(
-                title = "Quét ảnh",
-                subtitle = "Nhập từ thư viện",
-                type = HomeShortcutType.IMAGE,
+                title = "Nhập thủ công",
+                subtitle = "Nhập SSID & mật khẩu",
+                type = HomeShortcutType.MANUAL,
             ),
         ),
         recentNetworksTitle = "Mạng gần đây",

@@ -40,6 +40,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -54,10 +55,15 @@ fun OnboardingScreen(
     onStartClick: () -> Unit,
     onLoginClick: () -> Unit,
 ) {
+    val dark = LocalAppDarkMode.current
+    val screenBg = if (dark) Color(0xFF10131B) else Color(0xFFF7F9FC)
+    val cardBg = if (dark) Color(0xFF1F2430) else Color.White
+    val brand = if (dark) Color(0xFF8D90FF) else Color(0xFF4A4FD3)
+    val muted = if (dark) Color(0xFFABB2C1) else Color(0xFF6D7180)
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7F9FC))
+            .background(screenBg)
             .padding(horizontal = 20.dp, vertical = 18.dp),
     ) {
         Column(
@@ -70,7 +76,7 @@ fun OnboardingScreen(
                     .fillMaxWidth()
                     .weight(1f),
                 shape = RoundedCornerShape(48.dp),
-                color = Color.White,
+                color = cardBg,
                 shadowElevation = 12.dp,
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -91,13 +97,13 @@ fun OnboardingScreen(
                 ) {
                     Text(
                         text = "⌁",
-                        color = Color(0xFF4A4FD3),
+                        color = brand,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.ExtraBold,
                     )
                     Text(
                         text = state.appName,
-                        color = Color(0xFF4A4FD3),
+                        color = brand,
                         fontSize = 29.sp / 2,
                         fontWeight = FontWeight.ExtraBold,
                     )
@@ -105,7 +111,7 @@ fun OnboardingScreen(
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = state.appTagline,
-                    color = Color(0xFF6D7180),
+                    color = muted,
                     fontSize = 10.sp,
                     letterSpacing = 1.2.sp,
                     fontWeight = FontWeight.Bold,

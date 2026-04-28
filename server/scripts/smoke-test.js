@@ -39,7 +39,7 @@ runCase("Wi-Fi\nbephaba\nbabaloveu", {
 runCase("password: abcdef12", {
   ssid: null,
   password: "abcdef12",
-  sourceFormat: "single_line_password",
+  sourceFormat: "labeled_text",
   passwordOnly: true,
 });
 
@@ -48,6 +48,50 @@ runCase("abcdef12", {
   password: "abcdef12",
   sourceFormat: "single_line_password",
   passwordOnly: true,
+});
+
+runCase(
+  "Chao mung den voi Cafe ABC\nTen WiFi: Cafe_5G\nMat khau: Abc12345\nVui long khong chia se mat khau",
+  {
+    ssid: "Cafe_5G",
+    password: "Abc12345",
+    sourceFormat: "labeled_text",
+    passwordOnly: false,
+  },
+);
+
+runCase("WiFi Name:\nMyHomeNet\nPassword:\nA1b2c3d4", {
+  ssid: "MyHomeNet",
+  password: "A1b2c3d4",
+  sourceFormat: "two_line_ssid_password",
+  passwordOnly: false,
+});
+
+runCase(
+  "Thong tin truy cap mang\nVui long luu lai:\nWIFI:T:WPA;S:MyOffice;P:Qwerty123;;\nCam on",
+  {
+    ssid: "MyOffice",
+    password: "Qwerty123",
+    sourceFormat: "wifi_qr",
+    passwordOnly: false,
+  },
+);
+
+runCase(
+  "án dẫn!\nnói!?\nHỦ TIẾU BÒ KHO\nMÌ GÓI BÒ KHO\nTHÔNG TIN\nWIFI: Chú Mập\nPass: xincamon\nOPEN: 4 PM-12AM",
+  {
+    ssid: "Chú Mập",
+    password: "xincamon",
+    sourceFormat: "labeled_text",
+    passwordOnly: false,
+  },
+);
+
+runCase("WIFI: Chú Mập\nPass: xincamon", {
+  ssid: "Chú Mập",
+  password: "xincamon",
+  sourceFormat: "two_line_ssid_password",
+  passwordOnly: false,
 });
 
 const validAiReview = validateWifiCandidate({
@@ -63,7 +107,7 @@ assert.equal(validAiReview.normalizedSsid, "OfficeNet");
 const incompleteAiReview = validateWifiCandidate({
   ocrText: "Ten WiFi: OfficeNet",
 });
-assert.equal(incompleteAiReview.validated, false);
+assert.equal(incompleteAiReview.validated, true);
 assert.equal(incompleteAiReview.shouldAutoConnect, false);
 assert.equal(incompleteAiReview.parseRecommendation, "retry_ocr");
 assert.ok(incompleteAiReview.flags.includes("missing_password"));

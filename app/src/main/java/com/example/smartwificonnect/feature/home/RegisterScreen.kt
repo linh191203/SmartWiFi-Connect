@@ -49,19 +49,31 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.smartwificonnect.R
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
 
-private val RegisterPrimary = Color(0xFF4B4FD9)
-private val RegisterPrimaryLight = Color(0xFF5B5FEF)
-private val RegisterTextDark = Color(0xFF1D2029)
-private val RegisterTextMid = Color(0xFF595E6B)
-private val RegisterTextLight = Color(0xFF656A78)
-private val RegisterInputBg = Color(0xFFEDEFF4)
-private val RegisterInputIcon = Color(0xFF8C91A0)
-private val RegisterInputIconFocused = Color(0xFF4B4FD9)
-private val RegisterScreenBg = Color(0xFFF4F6FC)
-private val RegisterDivider = Color(0xFFDDE1EA)
-private val RegisterDividerText = Color(0xFFA8A7BC)
+private val RegisterPrimary: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF4B4FD9)
+private val RegisterPrimaryLight: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF7A7CFF) else Color(0xFF5B5FEF)
+private val RegisterTextDark: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFF4F6FB) else Color(0xFF1D2029)
+private val RegisterTextMid: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFABB2C1) else Color(0xFF595E6B)
+private val RegisterTextLight: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF9AA3B2) else Color(0xFF656A78)
+private val RegisterInputBg: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF2B3240) else Color(0xFFEDEFF4)
+private val RegisterInputIcon: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8E98AA) else Color(0xFF8C91A0)
+private val RegisterInputIconFocused: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF4B4FD9)
+private val RegisterScreenBg: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF4F6FC)
+private val RegisterDivider: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF2C3342) else Color(0xFFDDE1EA)
+private val RegisterDividerText: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF717B8D) else Color(0xFFA8A7BC)
 
 @Composable
 fun RegisterScreen(

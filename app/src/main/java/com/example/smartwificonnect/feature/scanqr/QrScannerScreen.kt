@@ -1,5 +1,13 @@
 package com.example.smartwificonnect.feature.scanqr
 
+import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.ImageAnalysis
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -31,6 +39,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,7 +54,23 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Canvas
+import com.example.smartwificonnect.feature.camera.CameraPreview
+import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
+import java.util.concurrent.atomic.AtomicBoolean
+
+private val ScannerBottomSurface: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xF21A1F2B) else Color(0xFFF8F9FB)
+private val ScannerBottomStroke: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF293142) else Color(0xFFE8EBF1)
+private val ScannerBottomBrand: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF5A63F5)
+private val ScannerBottomText: Color
+    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFE4E8F0) else Color(0xFF191C23)
 
 enum class ScannerBottomTab(
     val label: String,
@@ -63,6 +89,7 @@ fun QrScannerScreen(
     onHelpClick: () -> Unit,
     onFlashClick: () -> Unit,
     onGalleryClick: () -> Unit,
+    onQrCodeDetected: (String) -> Unit,
     onHomeClick: () -> Unit,
     onScanClick: () -> Unit,
     onShareClick: () -> Unit,
@@ -70,6 +97,13 @@ fun QrScannerScreen(
     onSettingsClick: () -> Unit,
     activeTab: ScannerBottomTab = ScannerBottomTab.SCAN,
 ) {
+    val hasDetectedQr = remember { AtomicBoolean(false) }
+    val qrAnalyzer = remember {
+        WifiQrAnalyzer(
+            hasDetectedQr = hasDetectedQr,
+            onQrCodeDetected = onQrCodeDetected,
+        )
+    }
     val tabs = listOf(
         ScannerBottomTab.HOME,
         ScannerBottomTab.SCAN,
@@ -91,17 +125,12 @@ fun QrScannerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF888C92),
-                        Color(0xFF6A6E75),
-                        Color(0xFF3D4249),
-                    ),
-                ),
-            ),
+            .background(Color(0xFF22262D)),
     ) {
-        FakeCameraBackdrop()
+        CameraPreview(
+            modifier = Modifier.fillMaxSize(),
+            analyzer = qrAnalyzer,
+        )
 
         Box(
             modifier = Modifier
@@ -257,6 +286,12 @@ private fun ScanTargetFrame(modifier: Modifier = Modifier) {
                 ),
         )
 
+        AnimatedScanLine(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(26.dp)),
+        )
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -286,6 +321,53 @@ private fun ScanTargetFrame(modifier: Modifier = Modifier) {
             drawLine(c, start = androidx.compose.ui.geometry.Offset(size.width, size.height), end = androidx.compose.ui.geometry.Offset(size.width - corner, size.height), strokeWidth = stroke, cap = StrokeCap.Round)
             drawLine(c, start = androidx.compose.ui.geometry.Offset(size.width, size.height), end = androidx.compose.ui.geometry.Offset(size.width, size.height - corner), strokeWidth = stroke, cap = StrokeCap.Round)
         }
+    }
+}
+
+@Composable
+private fun AnimatedScanLine(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "qrScanLineTransition")
+    val progress by transition.animateFloat(
+        initialValue = 0.08f,
+        targetValue = 0.92f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "qrScanLineProgress",
+    )
+
+    Canvas(modifier = modifier) {
+        val y = size.height * progress
+        val horizontalPadding = size.width * 0.10f
+        val glowHeight = 52f
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.Transparent,
+                    Color(0x33FFFFFF),
+                    Color.Transparent,
+                ),
+                startY = y - glowHeight / 2f,
+                endY = y + glowHeight / 2f,
+            ),
+            topLeft = androidx.compose.ui.geometry.Offset(horizontalPadding, y - glowHeight / 2f),
+            size = androidx.compose.ui.geometry.Size(size.width - horizontalPadding * 2f, glowHeight),
+        )
+        drawLine(
+            color = Color(0x70FFFFFF),
+            start = androidx.compose.ui.geometry.Offset(horizontalPadding, y),
+            end = androidx.compose.ui.geometry.Offset(size.width - horizontalPadding, y),
+            strokeWidth = 11f,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = Color.White,
+            start = androidx.compose.ui.geometry.Offset(horizontalPadding + 8f, y),
+            end = androidx.compose.ui.geometry.Offset(size.width - horizontalPadding - 8f, y),
+            strokeWidth = 3.5f,
+            cap = StrokeCap.Round,
+        )
     }
 }
 
@@ -425,8 +507,8 @@ private fun ScannerBottomBar(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        color = Color(0xFFF8F9FB),
-        border = BorderStroke(1.dp, Color(0xFFE8EBF1)),
+        color = ScannerBottomSurface,
+        border = BorderStroke(1.dp, ScannerBottomStroke),
     ) {
         Row(
             modifier = Modifier
@@ -457,7 +539,7 @@ private fun ScannerBottomItem(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(if (selected) Color(0xFF5A63F5) else Color.Transparent)
+            .background(if (selected) ScannerBottomBrand else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp, vertical = 7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -466,18 +548,59 @@ private fun ScannerBottomItem(
         Icon(
             imageVector = item.icon,
             contentDescription = item.label,
-            tint = if (selected) Color.White else Color(0xFF191C23),
+            tint = if (selected) Color.White else ScannerBottomText,
             modifier = Modifier.size(21.dp),
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = item.label,
-            color = if (selected) Color.White else Color(0xFF191C23),
+            color = if (selected) Color.White else ScannerBottomText,
             style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+private class WifiQrAnalyzer(
+    private val hasDetectedQr: AtomicBoolean,
+    private val onQrCodeDetected: (String) -> Unit,
+) : ImageAnalysis.Analyzer {
+    private val scanner = BarcodeScanning.getClient(
+        BarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build(),
+    )
+
+    @androidx.annotation.OptIn(ExperimentalGetImage::class)
+    override fun analyze(imageProxy: androidx.camera.core.ImageProxy) {
+        if (hasDetectedQr.get()) {
+            imageProxy.close()
+            return
+        }
+
+        val mediaImage = imageProxy.image
+        if (mediaImage == null) {
+            imageProxy.close()
+            return
+        }
+
+        val inputImage = InputImage.fromMediaImage(
+            mediaImage,
+            imageProxy.imageInfo.rotationDegrees,
+        )
+
+        scanner.process(inputImage)
+            .addOnSuccessListener { barcodes ->
+                val rawValue = barcodes.firstNotNullOfOrNull { it.rawValue?.trim() }
+                if (!rawValue.isNullOrBlank() && hasDetectedQr.compareAndSet(false, true)) {
+                    onQrCodeDetected(rawValue)
+                }
+            }
+            .addOnCompleteListener {
+                imageProxy.close()
+            }
     }
 }
 
@@ -490,6 +613,7 @@ private fun QrScannerScreenPreview() {
             onHelpClick = {},
             onFlashClick = {},
             onGalleryClick = {},
+            onQrCodeDetected = {},
             onHomeClick = {},
             onScanClick = {},
             onShareClick = {},
