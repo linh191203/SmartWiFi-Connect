@@ -1,14 +1,12 @@
 package com.example.smartwificonnect.feature.share
 
 import android.annotation.SuppressLint
-import androidx.compose.animation.core.LinearEasing
+import android.content.Intent
+import android.graphics.Bitmap
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,10 +28,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.IosShare
-import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.WifiTethering
@@ -44,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,15 +51,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 private val ShareBackground: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF7F9FC)
@@ -89,6 +98,12 @@ private val ShareBottomNavFill: Color
 private val ShareBottomNavStroke: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFF293142) else Color(0xFFF1F5F9)
 
+data class ShareWifiUiModel(
+    val ssid: String,
+    val password: String,
+    val security: String,
+)
+
 private enum class ShareBottomTab(
     val label: String,
     val icon: ImageVector,
@@ -100,17 +115,9 @@ private enum class ShareBottomTab(
     SETTINGS("Cài đặt", Icons.Outlined.Settings),
 }
 
-private data class ShareDeviceUiModel(
-    val name: String,
-    val status: String,
-    val actionLabel: String,
-    val accent: Color,
-)
-
 @Composable
 fun ShareWifiScreen(
-    networkName: String?,
-    hasShareableNetwork: Boolean,
+    network: ShareWifiUiModel?,
     onBackClick: () -> Unit,
     onHomeClick: () -> Unit,
     onScanClick: () -> Unit,
@@ -118,33 +125,27 @@ fun ShareWifiScreen(
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
-    val shareableName = networkName?.takeIf { it.isNotBlank() } ?: "Wi-Fi hiện tại"
-    var secondDeviceAccepted by rememberSaveable { mutableStateOf(false) }
-    val shareBrand = ShareBrand
-    val devices = if (hasShareableNetwork) {
-        listOf(
-            ShareDeviceUiModel(
-                name = "iPhone của Minh",
-                status = "Sẵn sàng kết nối",
-                actionLabel = "Chia sẻ",
-                accent = shareBrand,
-            ),
-            ShareDeviceUiModel(
-                name = "Samsung S23",
-                status = if (secondDeviceAccepted) "Đã chấp nhận" else "Đang yêu cầu...",
-                actionLabel = if (secondDeviceAccepted) "Đã gửi" else "Chấp nhận",
-                accent = if (secondDeviceAccepted) Color(0xFF17876D) else shareBrand,
-            ),
-        )
-    } else {
-        emptyList()
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    var copiedMessage by rememberSaveable { mutableStateOf("") }
+    val sharePayload = remember(network) { network?.toWifiQrPayload().orEmpty() }
+    val shareLink = remember(network) { network?.toSmartWifiLink().orEmpty() }
+    val shareText = remember(network, sharePayload, shareLink) {
+        network?.toShareText(sharePayload, shareLink).orEmpty()
+    }
+
+    fun shareTextWithSystem(text: String) {
+        if (text.isBlank()) return
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Chia sẻ Wi-Fi"))
     }
 
     Scaffold(
         containerColor = Color.Transparent,
-        topBar = {
-            ShareTopBar(onBackClick = onBackClick)
-        },
+        topBar = { ShareTopBar(onBackClick = onBackClick) },
         bottomBar = {
             ShareBottomBar(
                 onHomeClick = onHomeClick,
@@ -167,51 +168,43 @@ fun ShareWifiScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    start = 24.dp,
-                    top = innerPadding.calculateTopPadding() + 18.dp,
-                    end = 24.dp,
+                    start = 20.dp,
+                    top = innerPadding.calculateTopPadding() + 14.dp,
+                    end = 20.dp,
                     bottom = innerPadding.calculateBottomPadding() + 24.dp,
                 ),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(26.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                item {
-                    ShareRadar(
-                        enabled = hasShareableNetwork,
-                    )
-                }
-                item {
-                    ShareHeadline(
-                        enabled = hasShareableNetwork,
-                        networkName = shareableName,
-                    )
-                }
-                item {
-                    ShareSectionLabel(
-                        text = if (hasShareableNetwork) "THIẾT BỊ TÌM THẤY" else "TRẠNG THÁI KẾT NỐI",
-                    )
-                }
-                if (hasShareableNetwork) {
-                    items(devices.size) { index ->
-                        val device = devices[index]
-                        ShareDeviceCard(
-                            device = device,
-                            onActionClick = {
-                                if (device.name == "Samsung S23") {
-                                    secondDeviceAccepted = true
-                                }
-                            },
-                        )
-                    }
+                if (network == null || network.ssid.isBlank()) {
+                    item { ShareEmptyCard() }
                 } else {
                     item {
-                        ShareEmptyCard(networkName = networkName)
+                        ShareHero(network = network)
                     }
-                }
-                item {
-                    ShareCancelButton(
-                        onClick = onBackClick,
-                    )
+                    item {
+                        WifiQrCard(
+                            ssid = network.ssid,
+                            payload = sharePayload,
+                        )
+                    }
+                    item {
+                        ShareActionGrid(
+                            link = shareLink,
+                            copiedMessage = copiedMessage,
+                            onCopyLink = {
+                                clipboard.setText(AnnotatedString(shareLink))
+                                copiedMessage = "Đã sao chép link"
+                            },
+                            onShareLink = { shareTextWithSystem(shareLink) },
+                            onShareDetails = { shareTextWithSystem(shareText) },
+                            onCopyPassword = {
+                                clipboard.setText(AnnotatedString(network.password))
+                                copiedMessage = "Đã sao chép mật khẩu"
+                            },
+                            canCopyPassword = network.password.isNotBlank(),
+                        )
+                    }
                 }
             }
         }
@@ -249,7 +242,7 @@ private fun ShareTopBar(onBackClick: () -> Unit) {
             Text(
                 text = "Chia sẻ Wi-Fi",
                 color = ShareBrandDark,
-                style = MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold,
                 modifier = Modifier.align(Alignment.Center),
                 maxLines = 1,
@@ -260,174 +253,226 @@ private fun ShareTopBar(onBackClick: () -> Unit) {
 }
 
 @Composable
-private fun ShareRadar(enabled: Boolean) {
-    val shareBrand = ShareBrand
-    val infiniteTransition = rememberInfiniteTransition(label = "shareRadar")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(animation = tween(2200)),
-        label = "shareRadarPulse",
-    )
-    val orbitRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 9000, easing = LinearEasing),
-        ),
-        label = "shareRadarOrbitForward",
-    )
-    val orbitRotationReverse by infiniteTransition.animateFloat(
-        initialValue = 360f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 7600, easing = LinearEasing),
-        ),
-        label = "shareRadarOrbitReverse",
-    )
-    val ringScale by infiniteTransition.animateFloat(
-        initialValue = 0.985f,
-        targetValue = 1.015f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2600),
-        ),
-        label = "shareRadarRingScale",
-    )
-    val ringAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.88f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200),
-        ),
-        label = "shareRadarRingAlpha",
-    )
-    val centerFill by animateFloatAsState(
-        targetValue = if (enabled) 1f else 0.72f,
-        animationSpec = tween(400),
-        label = "shareRadarCenterFill",
-    )
-
-    Box(
-        modifier = Modifier.size(310.dp),
-        contentAlignment = Alignment.Center,
+private fun ShareHero(network: ShareWifiUiModel) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        color = ShareSurface,
+        shadowElevation = 2.dp,
+        border = BorderStroke(1.dp, ShareStroke),
     ) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = ringScale
-                    scaleY = ringScale
-                    alpha = if (enabled) ringAlpha else 0.72f
-                },
+        Row(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            val ringColor = shareBrand.copy(alpha = 0.22f)
-            val strokeColor = shareBrand.copy(alpha = 0.28f)
-            val radii = listOf(1f, 0.77f, 0.53f)
-            radii.forEachIndexed { index, factor ->
-                val diameter = size.minDimension * factor
-                drawCircle(
-                    color = ringColor.copy(alpha = 0.11f + index * 0.03f),
-                    radius = diameter / 2f,
+            Box(
+                modifier = Modifier
+                    .size(58.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(
+                        brush = Brush.linearGradient(
+                            colors = listOf(ShareBrandDark, ShareBrand),
+                        ),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.WifiTethering,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(30.dp),
                 )
-                drawCircle(
-                    color = strokeColor,
-                    radius = diameter / 2f,
-                    style = Stroke(width = 2.2f),
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = network.ssid,
+                    color = ShareTextPrimary,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (network.password.isBlank()) "Mạng mở, không cần mật khẩu" else "Sẵn sàng chia sẻ bằng QR hoặc link",
+                    color = ShareTextMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
+    }
+}
 
-        Box(
-            modifier = Modifier
-                .size((134f * pulseScale).dp)
-                .clip(CircleShape)
-                .background(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            shareBrand.copy(alpha = 0.18f * centerFill),
-                            shareBrand.copy(alpha = 0.04f * centerFill),
-                        ),
-                    ),
-                ),
-        )
+@Composable
+private fun WifiQrCard(
+    ssid: String,
+    payload: String,
+) {
+    val qrBitmap = remember(payload) { generateQrBitmap(payload, 720) }
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { rotationZ = orbitRotation },
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(32.dp),
+        color = ShareSurface,
+        shadowElevation = 4.dp,
+        border = BorderStroke(1.dp, ShareStroke),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(y = 54.dp)
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .background(if (enabled) Color(0xFF0B7E72) else ShareStroke),
+            Text(
+                text = "QR Wi-Fi offline",
+                color = ShareTextPrimary,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
             )
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { rotationZ = orbitRotationReverse },
-        ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .offset(x = 20.dp, y = 34.dp)
-                    .size(11.dp)
-                    .clip(CircleShape)
-                    .background(if (enabled) Color(0xFF8B90FF) else ShareStroke),
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .size(96.dp)
-                .clip(CircleShape)
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = listOf(ShareBrandDark, ShareBrand),
-                    ),
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.WifiTethering,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(44.dp),
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = Color.White,
+                border = BorderStroke(8.dp, Color.White),
+                shadowElevation = 1.dp,
+            ) {
+                Image(
+                    bitmap = qrBitmap.asImageBitmap(),
+                    contentDescription = "Mã QR Wi-Fi của $ssid",
+                    modifier = Modifier
+                        .size(236.dp)
+                        .padding(6.dp),
+                )
+            }
+            Text(
+                text = "Máy khác chỉ cần mở Camera và quét mã này. Không cần có Internet trước.",
+                color = ShareTextMuted,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
             )
         }
     }
 }
 
 @Composable
-private fun ShareHeadline(
-    enabled: Boolean,
-    networkName: String,
+private fun ShareActionGrid(
+    link: String,
+    copiedMessage: String,
+    onCopyLink: () -> Unit,
+    onShareLink: () -> Unit,
+    onShareDetails: () -> Unit,
+    onCopyPassword: () -> Unit,
+    canCopyPassword: Boolean,
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        ShareSectionLabel(text = "CHIA SẺ BẰNG LINK")
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = ShareSurface,
+            border = BorderStroke(1.dp, ShareStroke),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    text = link,
+                    color = ShareTextMuted,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ShareActionButton(
+                        modifier = Modifier.weight(1f),
+                        label = "Copy link",
+                        icon = Icons.Outlined.ContentCopy,
+                        primary = false,
+                        onClick = onCopyLink,
+                    )
+                    ShareActionButton(
+                        modifier = Modifier.weight(1f),
+                        label = "Gửi link",
+                        icon = Icons.Outlined.IosShare,
+                        primary = true,
+                        onClick = onShareLink,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ShareActionButton(
+                        modifier = Modifier.weight(1f),
+                        label = "Gửi mã",
+                        icon = Icons.Outlined.QrCode2,
+                        primary = false,
+                        onClick = onShareDetails,
+                    )
+                    ShareActionButton(
+                        modifier = Modifier.weight(1f),
+                        label = "Copy pass",
+                        icon = Icons.Outlined.ContentCopy,
+                        primary = false,
+                        enabled = canCopyPassword,
+                        onClick = onCopyPassword,
+                    )
+                }
+                if (copiedMessage.isNotBlank()) {
+                    Text(
+                        text = copiedMessage,
+                        color = ShareBrand,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareActionButton(
+    modifier: Modifier = Modifier,
+    label: String,
+    icon: ImageVector,
+    primary: Boolean,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = modifier
+            .height(50.dp)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.42f }
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = if (primary) ShareBrand else ShareSurfaceSoft,
     ) {
-        Text(
-            text = if (enabled) "Đang tìm thiết bị ở gần..." else "Chưa có mạng để chia sẻ",
-            color = ShareTextPrimary,
-            style = MaterialTheme.typography.displaySmall,
-            fontWeight = FontWeight.ExtraBold,
-        )
-        Text(
-            text = if (enabled) {
-                "Hãy để hai điện thoại gần nhau\nđể chia sẻ mật khẩu an toàn\nqua mạng $networkName"
-            } else {
-                "Thiết bị của bạn cần kết nối Wi-Fi trước,\nsau đó màn này sẽ cho phép chia sẻ\nvới thiết bị ở gần."
-            },
-            color = ShareTextMuted,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (primary) Color.White else ShareBrand,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(7.dp))
+            Text(
+                text = label,
+                color = if (primary) Color.White else ShareTextPrimary,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -443,77 +488,7 @@ private fun ShareSectionLabel(text: String) {
 }
 
 @Composable
-private fun ShareDeviceCard(
-    device: ShareDeviceUiModel,
-    onActionClick: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(32.dp),
-        color = ShareSurface,
-        shadowElevation = 2.dp,
-        border = BorderStroke(1.dp, ShareStroke),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(58.dp)
-                    .clip(CircleShape)
-                    .background(ShareBrandSoft),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.PhoneAndroid,
-                    contentDescription = null,
-                    tint = ShareBrand,
-                    modifier = Modifier.size(30.dp),
-                )
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = device.name,
-                    color = ShareTextPrimary,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = device.status,
-                    color = ShareTextMuted,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = if (device.actionLabel == "Chia sẻ") ShareBrandSoft else device.accent,
-                shadowElevation = if (device.actionLabel == "Chấp nhận") 10.dp else 0.dp,
-                modifier = Modifier.clickable(onClick = onActionClick),
-            ) {
-                Text(
-                    text = device.actionLabel,
-                    color = if (device.actionLabel == "Chia sẻ") ShareBrand else Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ShareEmptyCard(networkName: String?) {
+private fun ShareEmptyCard() {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(28.dp),
@@ -522,69 +497,37 @@ private fun ShareEmptyCard(networkName: String?) {
         border = BorderStroke(1.dp, ShareStroke),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 22.dp),
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            Box(
+                modifier = Modifier
+                    .size(62.dp)
+                    .clip(CircleShape)
+                    .background(ShareBrandSoft),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(ShareSurfaceSoft),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.WifiTethering,
-                        contentDescription = null,
-                        tint = ShareBrand,
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = "Kết nối một mạng trước",
-                        color = ShareTextPrimary,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Text(
-                        text = if (networkName.isNullOrBlank()) "Chưa phát hiện Wi-Fi đang hoạt động" else "Mạng gần nhất: $networkName",
-                        color = ShareTextMuted,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Rounded.WifiTethering,
+                    contentDescription = null,
+                    tint = ShareBrand,
+                    modifier = Modifier.size(32.dp),
+                )
             }
             Text(
-                text = "Khi thiết bị của bạn đã vào Wi-Fi, màn này sẽ cho phép chia sẻ nhanh cho máy ở gần theo kiểu an toàn.",
+                text = "Chưa có Wi-Fi để chia sẻ",
+                color = ShareTextPrimary,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = "Hãy kết nối hoặc lưu một mạng Wi-Fi trước. Khi có SSID và mật khẩu, app sẽ tạo QR offline cho bạn.",
                 color = ShareTextMuted,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ShareCancelButton(onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(999.dp),
-        color = ShareSurfaceSoft,
-        onClick = onClick,
-    ) {
-        Box(
-            modifier = Modifier.padding(vertical = 18.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "Hủy",
-                color = ShareTextPrimary,
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center,
             )
         }
     }
@@ -696,8 +639,86 @@ private fun ShareBottomItem(
             fontWeight = FontWeight.ExtraBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.offset(y = 0.dp),
+            modifier = Modifier
+                .offset(y = 0.dp)
+                .graphicsLayer {
+                    scaleX = contentScale
+                    scaleY = contentScale
+                },
         )
+    }
+}
+
+private fun ShareWifiUiModel.toWifiQrPayload(): String {
+    val type = when {
+        password.isBlank() -> "nopass"
+        security.contains("WEP", ignoreCase = true) -> "WEP"
+        else -> "WPA"
+    }
+    return "WIFI:T:${type};S:${ssid.escapeWifiQrValue()};P:${password.escapeWifiQrValue()};H:false;;"
+}
+
+private fun ShareWifiUiModel.toSmartWifiLink(): String {
+    return buildString {
+        append("smartwifi://join")
+        append("?ssid=${ssid.urlEncode()}")
+        append("&security=${security.urlEncode()}")
+        if (password.isNotBlank()) {
+            append("&password=${password.urlEncode()}")
+        }
+    }
+}
+
+private fun ShareWifiUiModel.toShareText(
+    qrPayload: String,
+    link: String,
+): String {
+    return buildString {
+        appendLine("SmartWiFi Connect")
+        appendLine("Wi-Fi: $ssid")
+        appendLine("Bao mat: ${if (password.isBlank()) "Mo" else security}")
+        if (password.isNotBlank()) {
+            appendLine("Mat khau: $password")
+        }
+        appendLine("Link: $link")
+        append("QR payload: $qrPayload")
+    }
+}
+
+private fun String.escapeWifiQrValue(): String {
+    return replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace(":", "\\:")
+        .replace("\"", "\\\"")
+}
+
+private fun String.urlEncode(): String {
+    return URLEncoder.encode(this, StandardCharsets.UTF_8.name())
+}
+
+private fun generateQrBitmap(
+    content: String,
+    size: Int,
+): Bitmap {
+    val hints = mapOf(
+        EncodeHintType.CHARACTER_SET to "UTF-8",
+        EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
+        EncodeHintType.MARGIN to 1,
+    )
+    val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size, hints)
+    val pixels = IntArray(size * size)
+    for (y in 0 until size) {
+        for (x in 0 until size) {
+            pixels[y * size + x] = if (matrix[x, y]) {
+                android.graphics.Color.BLACK
+            } else {
+                android.graphics.Color.WHITE
+            }
+        }
+    }
+    return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).apply {
+        setPixels(pixels, 0, size, 0, 0, size, size)
     }
 }
 
@@ -706,8 +727,11 @@ private fun ShareBottomItem(
 private fun ShareWifiScreenPreview() {
     SmartWifiAppTheme {
         ShareWifiScreen(
-            networkName = "Office_Main_Corp",
-            hasShareableNetwork = true,
+            network = ShareWifiUiModel(
+                ssid = "Office_Main_Corp",
+                password = "office-password",
+                security = "WPA/WPA2",
+            ),
             onBackClick = {},
             onHomeClick = {},
             onScanClick = {},

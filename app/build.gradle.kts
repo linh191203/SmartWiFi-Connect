@@ -75,6 +75,7 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.okhttp.logging.interceptor)
+    implementation(libs.zxing.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

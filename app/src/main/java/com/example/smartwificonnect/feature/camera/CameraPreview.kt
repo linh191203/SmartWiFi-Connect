@@ -3,6 +3,7 @@ package com.example.smartwificonnect.feature.camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCase
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
@@ -19,6 +20,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.util.concurrent.Executors
 
@@ -55,7 +58,12 @@ fun CameraPreview(
     DisposableEffect(lifecycleOwner, previewView, analyzer) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val executor = ContextCompat.getMainExecutor(context)
-        val listener = Runnable {
+        var isDisposed = false
+        var previewUseCase: Preview? = null
+        var analysisUseCase: ImageAnalysis? = null
+
+        fun bindCamera() {
+            if (isDisposed) return
             val cameraProvider = cameraProviderFuture.get()
             val preview = Preview.Builder().build().apply {
                 setSurfaceProvider(previewView.surfaceProvider)
@@ -82,13 +90,37 @@ fun CameraPreview(
                     imageAnalysis,
                 )
             }
+            previewUseCase = preview
+            analysisUseCase = imageAnalysis
+        }
+
+        val listener = Runnable {
+            bindCamera()
         }
 
         cameraProviderFuture.addListener(listener, executor)
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (cameraProviderFuture.isDone) {
+                    bindCamera()
+                } else {
+                    cameraProviderFuture.addListener({ bindCamera() }, executor)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
 
         onDispose {
+            isDisposed = true
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
             runCatching {
-                cameraProviderFuture.get().unbindAll()
+                if (cameraProviderFuture.isDone) {
+                    analysisUseCase?.clearAnalyzer()
+                    val boundUseCases: List<UseCase> = listOfNotNull(previewUseCase, analysisUseCase)
+                    if (boundUseCases.isNotEmpty()) {
+                        cameraProviderFuture.get().unbind(*boundUseCases.toTypedArray())
+                    }
+                }
             }
         }
     }

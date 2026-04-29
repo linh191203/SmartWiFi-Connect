@@ -22,26 +22,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.automirrored.rounded.ShowChart
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.rounded.Apartment
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Router
-import androidx.compose.material.icons.rounded.Security
-import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.WifiOff
 import androidx.compose.material3.Card
@@ -92,10 +93,6 @@ private val TextPrimary: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFFF4F6FB) else Color(0xFF1A1D25)
 private val TextMuted: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFFABB2C1) else Color(0xFF707684)
-private val MintCard: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF16483F) else Color(0xFF81EFD3)
-private val SkyCard: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF173545) else Color(0xFFD2E7FF)
 private val SecondaryTint: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFF173F38) else Color(0xFFE7FFF8)
 private val TertiaryTint: Color
@@ -104,8 +101,7 @@ private val BottomNavFill: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xF21A1F2B) else Color(0xF2FFFFFF)
 private val BottomNavStroke: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFF293142) else Color(0xFFF1F5F9)
-private val CameraActionCardHeight = 122.dp
-private val ShortcutActionCardHeight = 138.dp
+private val ShortcutActionCardHeight = 128.dp
 
 private enum class HomeBottomTab(
     val label: String,
@@ -172,38 +168,25 @@ fun HomeScreen(
                         title = state.quickConnectTitle,
                         subtitle = state.quickConnectSubtitle,
                         buttonLabel = state.quickConnectCta,
-                        onClick = onManualEntryClick,
-                    )
-                }
-
-                item {
-                    CameraActionCard(
-                        title = state.cameraTitle,
-                        subtitle = state.cameraSubtitle,
                         onClick = onScanImageClick,
                     )
                 }
 
                 item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        state.shortcutItems.forEach { shortcut ->
-                            ShortcutCard(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(ShortcutActionCardHeight),
-                                item = shortcut,
-                                onClick = {
-                                    when (shortcut.type) {
-                                        HomeShortcutType.QR -> onScanQrClick()
-                                        HomeShortcutType.MANUAL -> onManualEntryClick()
-                                    }
-                                },
-                            )
-                        }
-                    }
+                    val manualShortcut = state.shortcutItems
+                        .firstOrNull { it.type == HomeShortcutType.MANUAL }
+                        ?: HomeShortcutUiModel(
+                            title = "Nhập thủ công",
+                            subtitle = "Nhập SSID & mật khẩu",
+                            type = HomeShortcutType.MANUAL,
+                        )
+                    ShortcutCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(ShortcutActionCardHeight),
+                        item = manualShortcut,
+                        onClick = onManualEntryClick,
+                    )
                 }
 
                 item {
@@ -211,15 +194,6 @@ fun HomeScreen(
                         title = state.recentNetworksTitle,
                         items = state.recentNetworks,
                         onNetworkClick = onRecentNetworkClick,
-                    )
-                }
-
-                item {
-                    StatsSection(
-                        savedLabel = state.savedNetworksLabel,
-                        savedValue = state.savedNetworksCount,
-                        usageLabel = state.usageLabel,
-                        usageValue = state.usageValue,
                     )
                 }
 
@@ -320,7 +294,9 @@ private fun QuickConnectCard(
     onClick: () -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
@@ -385,7 +361,6 @@ private fun QuickConnectCard(
 
                 Surface(
                     modifier = Modifier.width(168.dp),
-                    onClick = onClick,
                     shape = RoundedCornerShape(999.dp),
                     color = SurfaceWhite,
                     shadowElevation = 2.dp,
@@ -419,75 +394,6 @@ private fun QuickConnectCard(
 }
 
 @Composable
-private fun CameraActionCard(
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(CameraActionCardHeight),
-        onClick = onClick,
-        shape = RoundedCornerShape(22.dp),
-        color = SurfaceCard,
-        shadowElevation = 3.dp,
-        border = BorderStroke(1.dp, Color(0xFFD8DCE5)),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFEDEBFC)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.PhotoCamera,
-                    contentDescription = null,
-                    tint = BrandPrimary,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = title,
-                    color = TextPrimary,
-                    style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                )
-                Text(
-                    text = subtitle,
-                    color = TextMuted,
-                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
-                contentDescription = null,
-                tint = TextMuted,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-    }
-}
-
-@Composable
 private fun ShortcutCard(
     modifier: Modifier = Modifier,
     item: HomeShortcutUiModel,
@@ -509,19 +415,22 @@ private fun ShortcutCard(
     Surface(
         modifier = modifier,
         onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(20.dp),
         color = SurfaceCard,
         shadowElevation = 2.dp,
         border = BorderStroke(1.dp, Color(0xFFD8DCE5)),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
             Box(
                 modifier = Modifier
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(tintColor),
                 contentAlignment = Alignment.Center,
             ) {
@@ -529,26 +438,33 @@ private fun ShortcutCard(
                     imageVector = icon,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(26.dp),
                 )
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
                 Text(
                     text = item.title,
                     color = TextPrimary,
-                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                    style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
                 )
                 Text(
                     text = item.subtitle,
                     color = TextMuted,
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
@@ -676,86 +592,48 @@ private fun NetworkRow(
 }
 
 @Composable
-private fun StatsSection(
-    savedLabel: String,
-    savedValue: String,
-    usageLabel: String,
-    usageValue: String,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Surface(
-            modifier = Modifier.weight(0.95f),
-            shape = RoundedCornerShape(22.dp),
-            color = MintCard,
-            shadowElevation = 3.dp,
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = savedLabel.uppercase(),
-                    color = Color(0xFF1E7E69),
-                    style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = savedValue,
-                    color = Color(0xFF0C4437),
-                    style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.ExtraBold,
-                )
-            }
-        }
-
-        Surface(
-            modifier = Modifier.weight(1.35f),
-            shape = RoundedCornerShape(22.dp),
-            color = SkyCard,
-            shadowElevation = 3.dp,
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = usageLabel.uppercase(),
-                        color = Color(0xFF4B79A8),
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = usageValue,
-                        color = TextPrimary,
-                        style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ShowChart,
-                    contentDescription = null,
-                    tint = Color(0xFF93B4D8),
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun SmartTipsSection() {
+    val transition = rememberInfiniteTransition(label = "aiConnectAnimation")
+    val pulse by transition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1300),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "aiPulse",
+    )
+    val firstBarAlpha by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "aiFirstBar",
+    )
+    val secondBarAlpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1100),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "aiSecondBar",
+    )
+    val thirdBarAlpha by transition.animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1000),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "aiThirdBar",
+    )
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
-            text = "Gợi ý thông minh",
+            text = "AI kết nối thông minh",
             color = TextPrimary,
             style = androidx.compose.material3.MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.ExtraBold,
@@ -764,104 +642,88 @@ private fun SmartTipsSection() {
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
-            color = Color(0xFFE9F6FF),
+            shape = RoundedCornerShape(24.dp),
+            color = SurfaceCard,
             shadowElevation = 3.dp,
+            border = BorderStroke(1.dp, Color(0xFFD8DCE5)),
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = 18.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFD4EDFF)),
+                        .size(84.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(Color(0xFFE4F5FF), Color(0xFFE7FFF8)),
+                            ),
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Speed,
-                        contentDescription = null,
-                        tint = Color(0xFF387FB8),
-                        modifier = Modifier.size(20.dp),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(58.dp)
+                            .graphicsLayer {
+                                scaleX = pulse
+                                scaleY = pulse
+                            }
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(BrandPrimary.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.AutoAwesome,
+                            contentDescription = null,
+                            tint = BrandPrimary,
+                            modifier = Modifier.size(30.dp),
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Khuyến nghị tốc độ",
-                        color = TextPrimary,
-                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Text(
-                        text = "Bạn đang gần mạng có tốc độ ổn định hơn 32%",
-                        color = TextMuted,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Rounded.ChevronRight,
-                    contentDescription = null,
-                    tint = TextMuted,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
 
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
-            color = Color(0xFFE9FFF7),
-            shadowElevation = 3.dp,
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFD1F7EA)),
-                    contentAlignment = Alignment.Center,
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Bottom,
                 ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Security,
-                        contentDescription = null,
-                        tint = Color(0xFF288869),
-                        modifier = Modifier.size(20.dp),
-                    )
+                    AiSignalBar(height = 18.dp, alpha = firstBarAlpha)
+                    AiSignalBar(height = 30.dp, alpha = secondBarAlpha)
+                    AiSignalBar(height = 24.dp, alpha = thirdBarAlpha)
                 }
-                Spacer(modifier = Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Bảo mật đề xuất",
-                        color = TextPrimary,
-                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                    Text(
-                        text = "Bật xác thực mạng tin cậy để vào Wi-Fi nhanh hơn",
-                        color = TextMuted,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Rounded.ChevronRight,
-                    contentDescription = null,
-                    tint = TextMuted,
-                    modifier = Modifier.size(18.dp),
+
+                Text(
+                    text = "AI đang tối ưu tín hiệu",
+                    color = TextPrimary,
+                    style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+                Text(
+                    text = "Quét, nhận diện và kết nối Wi-Fi nhanh hơn.",
+                    color = TextMuted,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = TextAlign.Center,
                 )
             }
         }
     }
+}
+
+@Composable
+private fun AiSignalBar(
+    height: androidx.compose.ui.unit.Dp,
+    alpha: Float,
+) {
+    Box(
+        modifier = Modifier
+            .width(9.dp)
+            .height(height)
+            .clip(RoundedCornerShape(999.dp))
+            .background(BrandPrimary.copy(alpha = alpha)),
+    )
 }
 
 @Composable

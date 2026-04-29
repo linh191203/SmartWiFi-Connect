@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.smartwificonnect.data.AiValidateData
 import com.example.smartwificonnect.data.DefaultWifiRepository
 import com.example.smartwificonnect.data.FuzzyNetworkPayload
+import com.example.smartwificonnect.data.ParsedWifiData
 import com.example.smartwificonnect.data.SaveNetworkRequest
 import com.example.smartwificonnect.data.WifiRepository
 import com.example.smartwificonnect.data.local.SavedWifiRecord
@@ -399,18 +400,11 @@ class MainViewModel @JvmOverloads constructor(
                 val bitmap = decodeBitmapFromUri(uri)
                 ocrProcessor.recognizeText(bitmap)
             }.onSuccess { text ->
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        scanSource = "Thu vien anh",
-                        ocrText = text,
-                        statusMessage = if (text.isBlank()) {
-                            "OCR khong doc duoc noi dung. Thu anh ro hon hoac doi goc chup."
-                        } else {
-                            "OCR thanh cong. Ban co the sua text truoc khi parse server."
-                        },
-                    )
-                }
+                handleOcrRecognitionSuccess(
+                    source = "Thu vien anh",
+                    text = text,
+                    blankMessage = "OCR khong doc duoc noi dung. Thu anh ro hon hoac doi goc chup.",
+                )
             }.onFailure { throwable ->
                 _state.update {
                     it.copy(
@@ -429,18 +423,11 @@ class MainViewModel @JvmOverloads constructor(
             runCatching {
                 ocrProcessor.recognizeText(bitmap)
             }.onSuccess { text ->
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        scanSource = "May quet",
-                        ocrText = text,
-                        statusMessage = if (text.isBlank()) {
-                            "OCR khong doc duoc noi dung. Thu chup lai ro hon."
-                        } else {
-                            "OCR thanh cong. Ban co the sua text truoc khi parse server."
-                        },
-                    )
-                }
+                handleOcrRecognitionSuccess(
+                    source = "May quet",
+                    text = text,
+                    blankMessage = "OCR khong doc duoc noi dung. Thu chup lai ro hon.",
+                )
             }.onFailure { throwable ->
                 _state.update {
                     it.copy(
@@ -451,6 +438,184 @@ class MainViewModel @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    private suspend fun handleOcrRecognitionSuccess(
+        source: String,
+        text: String,
+        blankMessage: String,
+        preferLocalCredentials: Boolean = false,
+    ) {
+        if (text.isBlank()) {
+            _state.update {
+                it.copy(
+                    isLoading = false,
+                    scanSource = source,
+                    ocrText = "",
+                    ssid = "",
+                    password = "",
+                    security = "",
+                    sourceFormat = "",
+                    confidence = null,
+                    statusMessage = blankMessage,
+                    aiValidation = AiValidationState.Hidden,
+                    ssidSuggestion = SsidSuggestionState.Hidden,
+                    nearbyNetworks = emptyList(),
+                    nearbyWifiStatus = "",
+                    wifiConnectionState = WifiConnectionState.Idle,
+                    isNearbyExpanded = false,
+                )
+            }
+            return
+        }
+
+        _state.update {
+            it.copy(
+                scanSource = source,
+                ocrText = text,
+                statusMessage = "OCR thanh cong. Dang dung AI de lay ten Wi-Fi va mat khau...",
+                aiValidation = AiValidationState.Loading,
+            )
+        }
+
+        val currentBaseUrl = _state.value.baseUrl
+        val resolved = resolveOcrCredentials(
+            baseUrl = currentBaseUrl,
+            text = text,
+            preferLocalCredentials = preferLocalCredentials,
+        )
+
+        val saveMessage = if (resolved.parsed.ssid.orEmpty().isNotBlank() ||
+            resolved.parsed.password.orEmpty().isNotBlank()
+        ) {
+            runCatching {
+                repository.saveParsedWifi(
+                    baseUrl = currentBaseUrl,
+                    ocrText = text,
+                    parsedWifiData = resolved.parsed,
+                    aiValidateData = resolved.aiData,
+                    fuzzyBestMatch = null,
+                    fuzzyScore = null,
+                )
+            }.fold(
+                onSuccess = { savedRecord ->
+                    _state.update { state ->
+                        state.copy(
+                            historyRecords = listOf(savedRecord) +
+                                state.historyRecords.filterNot { it.id == savedRecord.id },
+                        )
+                    }
+                    "Da luu vao SQLite."
+                },
+                onFailure = { "Chua luu duoc SQLite: ${it.message}" },
+            )
+        } else {
+            "Chua co du lieu de luu."
+        }
+
+        _state.update {
+            it.copy(
+                isLoading = false,
+                ssid = resolved.parsed.ssid.orEmpty(),
+                password = resolved.parsed.password.orEmpty(),
+                security = resolved.parsed.security.orEmpty(),
+                sourceFormat = resolved.parsed.sourceFormat.orEmpty(),
+                confidence = resolved.parsed.confidence,
+                statusMessage = "${resolved.message} $saveMessage",
+                aiValidation = AiValidationState.Hidden,
+                ssidSuggestion = SsidSuggestionState.Hidden,
+                nearbyNetworks = emptyList(),
+                nearbyWifiStatus = "",
+                wifiConnectionState = WifiConnectionState.Idle,
+                isNearbyExpanded = false,
+            )
+        }
+    }
+
+    private suspend fun resolveOcrCredentials(
+        baseUrl: String,
+        text: String,
+        preferLocalCredentials: Boolean = false,
+    ): OcrCredentialResolution {
+        val local = ocrProcessor.extractWifiCredentials(text)
+        if (preferLocalCredentials && (local.ssid.isNotBlank() || local.password.isNotBlank())) {
+            return OcrCredentialResolution(
+                parsed = ParsedWifiData(
+                    ssid = local.ssid,
+                    password = local.password,
+                    security = "",
+                    sourceFormat = "qr_local",
+                    confidence = null,
+                ),
+                aiData = null,
+                message = "Da doc thong tin tu ma QR. Hay kiem tra roi bam Ket noi.",
+            )
+        }
+
+        val aiResolution = resolveAiValidation(
+            baseUrl = baseUrl,
+            ssid = null,
+            password = null,
+            ocrText = text,
+        )
+        val aiReady = aiResolution.uiState as? AiValidationState.Ready
+        val aiSsid = aiReady?.normalizedSsid.orEmpty().trim()
+        val aiPassword = aiReady?.normalizedPassword.orEmpty().trim()
+        if (aiSsid.isNotBlank() || aiPassword.isNotBlank()) {
+            return OcrCredentialResolution(
+                parsed = ParsedWifiData(
+                    ssid = aiSsid,
+                    password = aiPassword,
+                    security = "",
+                    sourceFormat = "ai_ocr",
+                    confidence = aiReady?.confidence,
+                ),
+                aiData = aiResolution.persisted,
+                message = "AI da dien thong tin. Hay kiem tra SSID/mat khau roi bam Ket noi.",
+            )
+        }
+
+        val parsedByServer = runCatching {
+            repository.parseOcr(baseUrl, text)
+        }.getOrNull()
+        if (parsedByServer?.ok == true && parsedByServer.data != null) {
+            val parsed = parsedByServer.data
+            if (parsed.ssid.orEmpty().isNotBlank() || parsed.password.orEmpty().isNotBlank()) {
+                return OcrCredentialResolution(
+                    parsed = parsed.copy(
+                        sourceFormat = parsed.sourceFormat.orEmpty().ifBlank { "ocr_server" },
+                    ),
+                    aiData = aiResolution.persisted,
+                    message = "Da dien thong tin tu ket qua OCR. Hay kiem tra roi bam Ket noi.",
+                )
+            }
+        }
+
+        if (local.ssid.isNotBlank() || local.password.isNotBlank()) {
+            return OcrCredentialResolution(
+                parsed = ParsedWifiData(
+                    ssid = local.ssid,
+                    password = local.password,
+                    security = "",
+                    sourceFormat = "ocr_local_hint",
+                    confidence = null,
+                ),
+                aiData = aiResolution.persisted,
+                message = "AI chua tra du lieu ro rang, app da dien goi y tu noi dung OCR.",
+            )
+        }
+
+        return OcrCredentialResolution(
+            parsed = ParsedWifiData(
+                ssid = "",
+                password = "",
+                security = "",
+                sourceFormat = "",
+                confidence = null,
+            ),
+            aiData = aiResolution.persisted,
+            message = "Chua doc duoc ten Wi-Fi va mat khau. Ban co the nhap lai thu cong.",
+        )
     }
 
     fun onImageSelectionCanceled() {
@@ -607,20 +772,44 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun consumeRecognizedText(text: String) {
+        viewModelScope.launch {
+            setOcrLoading("Dang doc thong tin tu ma QR...")
+            handleOcrRecognitionSuccess(
+                source = "Quet QR",
+                text = text,
+                blankMessage = "QR khong co thong tin Wi-Fi hop le. Vui long quet lai.",
+                preferLocalCredentials = true,
+            )
+        }
+    }
+
+    fun consumeSharedWifiLink(uri: Uri?) {
+        if (uri?.scheme != "smartwifi" || uri.host != "join") return
+        val sharedSsid = uri.getQueryParameter("ssid").orEmpty().trim()
+        if (sharedSsid.isBlank()) return
+
+        val sharedPassword = uri.getQueryParameter("password").orEmpty()
+        val sharedSecurity = uri.getQueryParameter("security").orEmpty().ifBlank {
+            if (sharedPassword.isBlank()) "Open" else "WPA/WPA2"
+        }
+
         _state.update {
             it.copy(
-                ocrText = text,
+                ocrText = uri.toString(),
+                ssid = sharedSsid,
+                password = sharedPassword,
+                security = sharedSecurity,
+                sourceFormat = "share_link",
+                confidence = null,
+                scanSource = "Link chia se",
+                statusMessage = "Da nhan thong tin Wi-Fi tu link chia se. Hay kiem tra roi bam Ket noi.",
+                isLoading = false,
                 aiValidation = AiValidationState.Hidden,
                 ssidSuggestion = SsidSuggestionState.Hidden,
                 nearbyNetworks = emptyList(),
                 nearbyWifiStatus = "",
                 wifiConnectionState = WifiConnectionState.Idle,
                 isNearbyExpanded = false,
-                statusMessage = if (text.isBlank()) {
-                    "OCR khong nhan duoc ky tu nao, vui long thu lai"
-                } else {
-                    "Da nhan OCR, bam Parse de trich xuat WiFi"
-                },
             )
         }
     }
@@ -1194,6 +1383,12 @@ private data class FuzzyResolution(
     val nearbyNetworks: List<NearbyNetwork>,
     val bestMatch: String?,
     val score: Double?,
+)
+
+private data class OcrCredentialResolution(
+    val parsed: ParsedWifiData,
+    val aiData: AiValidateData?,
+    val message: String,
 )
 
 enum class NetworkDetailOrigin {

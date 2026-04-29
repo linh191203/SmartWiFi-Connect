@@ -11,10 +11,6 @@ data class HomeUiState(
     val shortcutItems: List<HomeShortcutUiModel>,
     val recentNetworksTitle: String,
     val recentNetworks: List<RecentNetworkUiModel>,
-    val savedNetworksLabel: String,
-    val savedNetworksCount: String,
-    val usageLabel: String,
-    val usageValue: String,
     val isLoading: Boolean = false,
 )
 

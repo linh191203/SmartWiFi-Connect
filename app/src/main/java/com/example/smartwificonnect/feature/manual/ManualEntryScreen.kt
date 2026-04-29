@@ -55,6 +55,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -435,12 +436,14 @@ private fun ManualTopBar(onBackClick: () -> Unit) {
         Text(
             text = stringResource(R.string.manual_entry_brand_title),
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.ExtraBold,
             color = ManualBrand,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Surface(
-            modifier = Modifier.size(44.dp),
+            modifier = Modifier.size(36.dp),
             shape = CircleShape,
             color = Color(0xFFA2CFCC),
         ) {
@@ -449,7 +452,7 @@ private fun ManualTopBar(onBackClick: () -> Unit) {
                     imageVector = Icons.Rounded.Person,
                     contentDescription = stringResource(R.string.manual_entry_cd_profile),
                     tint = Color(0xFF2F4B59),
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
         }

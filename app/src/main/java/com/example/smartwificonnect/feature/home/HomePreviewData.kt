@@ -11,11 +11,6 @@ object HomePreviewData {
         cameraSubtitle = "Sử dụng camera để nhận diện mạng tự động",
         shortcutItems = listOf(
             HomeShortcutUiModel(
-                title = "Quét mã QR",
-                subtitle = "Tham gia qua mã",
-                type = HomeShortcutType.QR,
-            ),
-            HomeShortcutUiModel(
                 title = "Nhập thủ công",
                 subtitle = "Nhập SSID & mật khẩu",
                 type = HomeShortcutType.MANUAL,
@@ -39,9 +34,5 @@ object HomePreviewData {
                 type = RecentNetworkType.BUILDING,
             ),
         ),
-        savedNetworksLabel = "Đã lưu",
-        savedNetworksCount = "12",
-        usageLabel = "Tổng dữ liệu",
-        usageValue = "24.8 GB",
     )
 }

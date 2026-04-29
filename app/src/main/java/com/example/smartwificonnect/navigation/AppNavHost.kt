@@ -47,6 +47,7 @@ import com.example.smartwificonnect.feature.scanimage.ImageScanScreen
 import com.example.smartwificonnect.feature.scanimage.OcrResultScreen
 import com.example.smartwificonnect.feature.scanqr.QrScannerScreen
 import com.example.smartwificonnect.feature.share.ShareWifiScreen
+import com.example.smartwificonnect.feature.share.ShareWifiUiModel
 import com.example.smartwificonnect.feature.settings.SettingsScreen
 import java.util.Locale
 
@@ -54,6 +55,7 @@ import java.util.Locale
 fun AppNavHost(
     mainViewModel: MainViewModel,
     navController: NavHostController = rememberNavController(),
+    startDestination: String = Routes.ONBOARDING,
 ) {
     val context = LocalContext.current
     val mainState by mainViewModel.state.collectAsState()
@@ -168,7 +170,7 @@ fun AppNavHost(
 
     NavHost(
         navController = navController,
-        startDestination = Routes.ONBOARDING,
+        startDestination = startDestination,
     ) {
         composable(Routes.ONBOARDING) {
             val onboardingState = OnboardingUiState(
@@ -309,7 +311,7 @@ fun AppNavHost(
                 onCloseClick = { navController.popBackStack() },
                 onHelpClick = {},
                 onFlashClick = {},
-                onGalleryClick = { navController.navigate(Routes.SCAN_IMAGE) },
+                onGalleryClick = { pickImageLauncher.launch("image/*") },
                 onQrCodeDetected = { rawQrText ->
                     mainViewModel.consumeRecognizedText(rawQrText)
                     openOcrResult()
@@ -354,14 +356,8 @@ fun AppNavHost(
             OcrResultScreen(
                 state = mainState,
                 onBackClick = { navController.popBackStack() },
-                onOcrTextChange = mainViewModel::onOcrTextChanged,
-                onParseClick = mainViewModel::parseCurrentText,
-                onAcceptSuggestion = mainViewModel::acceptSsidSuggestion,
-                onDismissSuggestion = mainViewModel::dismissSsidSuggestion,
-                onToggleNearby = mainViewModel::toggleNearbyExpanded,
-                onSelectNetwork = mainViewModel::selectNearbyNetwork,
-                onUseAiSsid = mainViewModel::applyAiNormalizedSsid,
-                onUseAiPassword = mainViewModel::applyAiNormalizedPassword,
+                onSsidChange = mainViewModel::onSsidChanged,
+                onPasswordChange = mainViewModel::onPasswordChanged,
                 onConnectWifi = connectWifiWithPermission,
             )
         }
@@ -418,13 +414,8 @@ fun AppNavHost(
             )
         }
         composable(Routes.SHARE) {
-            val shareableSsid = when (val connectionState = mainState.wifiConnectionState) {
-                is WifiConnectionState.Connected -> connectionState.ssid
-                else -> mainState.historyRecords.firstOrNull()?.ssid ?: mainState.ssid
-            }
             ShareWifiScreen(
-                networkName = shareableSsid,
-                hasShareableNetwork = shareableSsid.isNotBlank(),
+                network = mainState.toShareWifiUiModel(),
                 onBackClick = { navController.popBackStack() },
                 onHomeClick = openHome,
                 onScanClick = { openRouteWithCameraPermission(Routes.SCAN_QR) },
@@ -500,6 +491,34 @@ private fun wifiConnectPermissions(): List<String> {
     return nearbyWifiPermissions()
 }
 
+private fun MainUiState.toShareWifiUiModel(): ShareWifiUiModel? {
+    val connectedSsid = (wifiConnectionState as? WifiConnectionState.Connected)?.ssid
+    val connectedRecord = connectedSsid?.let { activeSsid ->
+        historyRecords.firstOrNull { it.ssid.equals(activeSsid, ignoreCase = true) }
+    }
+    val fallbackRecord = historyRecords.firstOrNull { it.ssid.isNotBlank() }
+    val shareSsid = connectedSsid
+        ?: ssid.takeIf { it.isNotBlank() }
+        ?: fallbackRecord?.ssid
+        ?: return null
+    val sharePassword = when {
+        connectedSsid != null && ssid.equals(connectedSsid, ignoreCase = true) -> password
+        ssid.equals(shareSsid, ignoreCase = true) && password.isNotBlank() -> password
+        connectedRecord != null -> connectedRecord.password
+        fallbackRecord?.ssid.equals(shareSsid, ignoreCase = true) -> fallbackRecord?.password.orEmpty()
+        else -> ""
+    }
+    val shareSecurity = security
+        .takeIf { it.isNotBlank() && ssid.equals(shareSsid, ignoreCase = true) }
+        ?: if (sharePassword.isBlank()) "Open" else "WPA/WPA2"
+
+    return ShareWifiUiModel(
+        ssid = shareSsid,
+        password = sharePassword,
+        security = shareSecurity,
+    )
+}
+
 private fun buildHomeState(mainState: MainUiState): HomeUiState {
     val fallback = HomePreviewData.default
     val connectedSsid = (mainState.wifiConnectionState as? WifiConnectionState.Connected)?.ssid
@@ -524,8 +543,6 @@ private fun buildHomeState(mainState: MainUiState): HomeUiState {
     return fallback.copy(
         connectivityStatus = connectedSsid?.let { "Đang kết nối tới $it." } ?: fallback.connectivityStatus,
         recentNetworks = recentNetworks,
-        savedNetworksCount = mainState.historyRecords.size.toString(),
-        usageValue = if (connectedSsid != null) "Live" else fallback.usageValue,
     )
 }
 
