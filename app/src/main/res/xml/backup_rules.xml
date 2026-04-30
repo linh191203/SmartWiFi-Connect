@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude the WiFi history database; it contains encrypted credentials
+         that are device-specific (Keystore key is hardware-bound) and must not
+         migrate to other devices or cloud storage. -->
+    <exclude domain="database" path="smart_wifi_connect.db" />
+    <exclude domain="database" path="smart_wifi_connect.db-shm" />
+    <exclude domain="database" path="smart_wifi_connect.db-wal" />
+</full-backup-content>

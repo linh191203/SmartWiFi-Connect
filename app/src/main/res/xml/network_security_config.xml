@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cleartext (HTTP) is blocked globally.
+    Only localhost / emulator bridge addresses are exempted so that debug builds
+    can reach the local Express server without needing a real HTTPS certificate.
+    Release builds should point BASE_URL at an HTTPS endpoint and never hit these
+    exempted domains.
+-->
+<network-security-config>
+    <!-- Block all cleartext traffic by default -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Allow HTTP only to loopback / Android-emulator bridge -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <!-- Android emulator host alias -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

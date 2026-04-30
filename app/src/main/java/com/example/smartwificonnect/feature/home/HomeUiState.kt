@@ -1,0 +1,40 @@
+package com.example.smartwificonnect.feature.home
+
+data class HomeUiState(
+    val greeting: String,
+    val connectivityStatus: String,
+    val quickConnectTitle: String,
+    val quickConnectSubtitle: String,
+    val quickConnectCta: String,
+    val cameraTitle: String,
+    val cameraSubtitle: String,
+    val shortcutItems: List<HomeShortcutUiModel>,
+    val recentNetworksTitle: String,
+    val recentNetworks: List<RecentNetworkUiModel>,
+    val isLoading: Boolean = false,
+)
+
+data class HomeShortcutUiModel(
+    val title: String,
+    val subtitle: String,
+    val type: HomeShortcutType,
+)
+
+data class RecentNetworkUiModel(
+    val name: String,
+    val lastConnectedLabel: String,
+    val type: RecentNetworkType,
+    val sourceRecordId: Long? = null,
+    val isConnected: Boolean = false,
+)
+
+enum class HomeShortcutType {
+    QR,
+    MANUAL,
+}
+
+enum class RecentNetworkType {
+    WIFI,
+    ROUTER,
+    BUILDING,
+}
