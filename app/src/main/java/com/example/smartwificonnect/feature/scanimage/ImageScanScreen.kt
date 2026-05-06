@@ -1,6 +1,7 @@
 package com.example.smartwificonnect.feature.scanimage
 
 import android.graphics.Bitmap
+import android.graphics.Rect
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -51,6 +52,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -58,6 +61,7 @@ import androidx.compose.ui.unit.dp
 import com.example.smartwificonnect.feature.camera.CameraPreview
 import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
+import kotlin.math.roundToInt
 
 private val ImageScanBackground: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF7F9FC)
@@ -97,6 +101,8 @@ fun ImageScanScreen(
     activeTab: ImageScanBottomTab = ImageScanBottomTab.SCAN,
 ) {
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    var previewBounds by remember { mutableStateOf<Rect?>(null) }
+    var frameBounds by remember { mutableStateOf<Rect?>(null) }
     val tabs = listOf(
         ImageScanBottomTab.HOME,
         ImageScanBottomTab.SCAN,
@@ -132,7 +138,11 @@ fun ImageScanScreen(
                 .background(Color(0xFF565656)),
         ) {
             CameraPreview(
-                modifier = Modifier.matchParentSize(),
+                modifier = Modifier
+                    .matchParentSize()
+                    .onGloballyPositioned { coordinates ->
+                        previewBounds = coordinates.toRootRect()
+                    },
                 onPreviewReady = { previewView = it },
             )
             Box(
@@ -149,7 +159,11 @@ fun ImageScanScreen(
                 Spacer(modifier = Modifier.height(92.dp))
 
                 ImageScanFrame(
-                    modifier = Modifier.size(274.dp),
+                    modifier = Modifier
+                        .size(274.dp)
+                        .onGloballyPositioned { coordinates ->
+                            frameBounds = coordinates.toRootRect()
+                        },
                 )
 
                 Spacer(modifier = Modifier.height(40.dp))
@@ -161,11 +175,13 @@ fun ImageScanScreen(
                 ImageScanActionBar(
                     onOpenGalleryClick = onOpenGalleryClick,
                     onCaptureClick = {
-                        val bitmap = previewView?.bitmap
-                        if (bitmap == null) {
+                        val croppedBitmap = previewView
+                            ?.bitmap
+                            ?.cropToFrame(previewBounds, frameBounds)
+                        if (croppedBitmap == null) {
                             onCaptureUnavailable()
                         } else {
-                            onCaptureClick(bitmap)
+                            onCaptureClick(croppedBitmap)
                         }
                     },
                     onSwitchToQrClick = onSwitchToQrClick,
@@ -181,6 +197,38 @@ fun ImageScanScreen(
             onTabClick = { onTabClick(it) },
         )
     }
+}
+
+private fun androidx.compose.ui.layout.LayoutCoordinates.toRootRect(): Rect {
+    val position = positionInRoot()
+    return Rect(
+        position.x.roundToInt(),
+        position.y.roundToInt(),
+        (position.x + size.width).roundToInt(),
+        (position.y + size.height).roundToInt(),
+    )
+}
+
+private fun Bitmap.cropToFrame(previewBounds: Rect?, frameBounds: Rect?): Bitmap? {
+    if (previewBounds == null || frameBounds == null) return this
+    if (previewBounds.width() <= 0 || previewBounds.height() <= 0) return this
+
+    val leftInPreview = frameBounds.left - previewBounds.left
+    val topInPreview = frameBounds.top - previewBounds.top
+    val rightInPreview = frameBounds.right - previewBounds.left
+    val bottomInPreview = frameBounds.bottom - previewBounds.top
+
+    val scaleX = width.toFloat() / previewBounds.width().toFloat()
+    val scaleY = height.toFloat() / previewBounds.height().toFloat()
+    val left = (leftInPreview * scaleX).roundToInt().coerceIn(0, width - 1)
+    val top = (topInPreview * scaleY).roundToInt().coerceIn(0, height - 1)
+    val right = (rightInPreview * scaleX).roundToInt().coerceIn(left + 1, width)
+    val bottom = (bottomInPreview * scaleY).roundToInt().coerceIn(top + 1, height)
+    val cropWidth = right - left
+    val cropHeight = bottom - top
+
+    if (cropWidth < 32 || cropHeight < 32) return null
+    return Bitmap.createBitmap(this, left, top, cropWidth, cropHeight)
 }
 
 @Composable

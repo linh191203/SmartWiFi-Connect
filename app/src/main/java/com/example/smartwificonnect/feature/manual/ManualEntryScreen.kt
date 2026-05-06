@@ -23,7 +23,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Link
-import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Router
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -443,16 +442,25 @@ private fun ManualTopBar(onBackClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
         )
         Surface(
-            modifier = Modifier.size(36.dp),
-            shape = CircleShape,
-            color = Color(0xFFA2CFCC),
+            shape = RoundedCornerShape(999.dp),
+            color = ManualInputBackground,
         ) {
-            Box(contentAlignment = Alignment.Center) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 Icon(
-                    imageVector = Icons.Rounded.Person,
-                    contentDescription = stringResource(R.string.manual_entry_cd_profile),
-                    tint = Color(0xFF2F4B59),
-                    modifier = Modifier.size(22.dp),
+                    imageVector = Icons.Rounded.Router,
+                    contentDescription = null,
+                    tint = ManualBrand,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = "Wi-Fi",
+                    color = ManualBrand,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.ExtraBold,
                 )
             }
         }

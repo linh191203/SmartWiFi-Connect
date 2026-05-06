@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -52,8 +51,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,7 +90,6 @@ private data class SettingsColors(
     val switchOffTrack: Color,
     val footerPrimary: Color,
     val footerSecondary: Color,
-    val profileBorder: Color,
 )
 
 private val LightSettingsColors = SettingsColors(
@@ -117,7 +115,6 @@ private val LightSettingsColors = SettingsColors(
     switchOffTrack = Color(0xFFD9DEE3),
     footerPrimary = Color(0xFF969BA8),
     footerSecondary = Color(0xFFB2B7C1),
-    profileBorder = Color(0xFFF2F4F8),
 )
 
 private val DarkSettingsColors = SettingsColors(
@@ -143,7 +140,6 @@ private val DarkSettingsColors = SettingsColors(
     switchOffTrack = Color(0xFF525B68),
     footerPrimary = Color(0xFF9AA3B2),
     footerSecondary = Color(0xFF717B8D),
-    profileBorder = Color(0xFF2C3342),
 )
 
 private val LocalSettingsColors = staticCompositionLocalOf { LightSettingsColors }
@@ -162,15 +158,17 @@ private enum class SettingsBottomTab(
 @Composable
 fun SettingsScreen(
     isDarkModeEnabled: Boolean,
+    autoConnectSubtitle: String,
+    priorityNetworkSubtitle: String,
     onDarkModeChange: (Boolean) -> Unit,
+    onAutoConnectClick: () -> Unit,
+    onPriorityNetworkClick: () -> Unit,
     onHomeClick: () -> Unit,
     onScanClick: () -> Unit,
     onShareClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
 ) {
-    var autoConnectEnabled by rememberSaveable { mutableStateOf(true) }
-
     CompositionLocalProvider(
         LocalSettingsColors provides if (isDarkModeEnabled) DarkSettingsColors else LightSettingsColors,
     ) {
@@ -207,7 +205,6 @@ fun SettingsScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(28.dp),
                 ) {
-                    item { ProfileCard() }
                     item {
                         SettingsSection(title = "KẾT NỐI") {
                             SettingsRow(
@@ -215,14 +212,9 @@ fun SettingsScreen(
                                 iconBackground = if (isDarkModeEnabled) Color(0xFF173F38) else Color(0xFFD8FFF2),
                                 iconTint = if (isDarkModeEnabled) Color(0xFF7EF5D8) else Color(0xFF008A74),
                                 title = "Tự động kết nối",
-                                subtitle = "Tự động tham gia các mạng đã biết",
-                                trailing = {
-                                    SettingsSwitch(
-                                        checked = autoConnectEnabled,
-                                        onCheckedChange = { autoConnectEnabled = it },
-                                    )
-                                },
-                                onClick = { autoConnectEnabled = !autoConnectEnabled },
+                                subtitle = autoConnectSubtitle,
+                                trailing = { Chevron() },
+                                onClick = onAutoConnectClick,
                             )
                             SettingsDivider()
                             SettingsRow(
@@ -230,8 +222,9 @@ fun SettingsScreen(
                                 iconBackground = if (isDarkModeEnabled) Color(0xFF173545) else Color(0xFFE5F8FF),
                                 iconTint = if (isDarkModeEnabled) Color(0xFF74DFFF) else Color(0xFF007D9C),
                                 title = "Ưu tiên mạng",
-                                subtitle = "Ưu tiên băng tần 5GHz khi khả dụng",
+                                subtitle = priorityNetworkSubtitle,
                                 trailing = { Chevron() },
+                                onClick = onPriorityNetworkClick,
                             )
                         }
                     }
@@ -324,91 +317,28 @@ private fun SettingsTopBar() {
                 )
             }
 
-            Avatar()
-        }
-    }
-}
-
-@Composable
-private fun Avatar() {
-    Surface(
-        modifier = Modifier
-            .offset(y = 3.dp)
-            .size(38.dp),
-        shape = CircleShape,
-        color = Color(0xFFF5D8C6),
-        shadowElevation = 2.dp,
-        border = BorderStroke(1.dp, Color(0xFFF0B6A7)),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(Color(0xFFFFD8CD), Color(0xFFFFEFE3), Color(0xFFD88962)),
-                    ),
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(13.dp)
-                    .height(27.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFFFFCFBF)),
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProfileCard() {
-    val colors = LocalSettingsColors.current
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(26.dp),
-        color = colors.surface,
-        shadowElevation = 2.dp,
-        border = BorderStroke(1.dp, colors.profileBorder),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 22.dp, vertical = 23.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(62.dp)
-                    .clip(CircleShape)
-                    .background(colors.brandSoft),
-                contentAlignment = Alignment.Center,
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = colors.brandSoft,
             ) {
-                Icon(
-                    imageVector = Icons.Outlined.AccountCircle,
-                    contentDescription = null,
-                    tint = colors.brandPrimaryDark,
-                    modifier = Modifier.size(38.dp),
-                )
-            }
-            Column(
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    text = "Alex Johnson",
-                    color = colors.textPrimary,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "Thành viên Premium",
-                    color = colors.success,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.WifiTethering,
+                        contentDescription = null,
+                        tint = colors.brandPrimaryDark,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "Wi-Fi",
+                        color = colors.brandPrimaryDark,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
             }
         }
     }
@@ -721,7 +651,11 @@ private fun SettingsScreenPreview() {
     SmartWifiAppTheme {
         SettingsScreen(
             isDarkModeEnabled = false,
+            autoConnectSubtitle = "Đã tìm thấy mạng đã lưu ở gần đây",
+            priorityNetworkSubtitle = "Ưu tiên mạng mạnh nhất nếu đang khả dụng",
             onDarkModeChange = {},
+            onAutoConnectClick = {},
+            onPriorityNetworkClick = {},
             onHomeClick = {},
             onScanClick = {},
             onShareClick = {},

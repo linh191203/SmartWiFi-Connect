@@ -1,6 +1,7 @@
 package com.example.smartwificonnect.feature.scanimage
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,21 +52,19 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.smartwificonnect.MainUiState
 import com.example.smartwificonnect.WifiConnectionState
-import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
-import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
 
 private val OcrBackground: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF6F8FC)
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFF10131B) else Color(0xFFF6F8FC)
 private val OcrSurface: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF1F2430) else Color.White
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFF1F2430) else Color.White
 private val OcrSoftSurface: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF252B38) else Color(0xFFF0F2F7)
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFF252B38) else Color(0xFFF0F2F7)
 private val OcrBrand: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFF8D90FF) else Color(0xFF4451D7)
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFF8D90FF) else Color(0xFF4451D7)
 private val OcrTitle: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFF4F6FB) else Color(0xFF222630)
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFFF4F6FB) else Color(0xFF222630)
 private val OcrBody: Color
-    @Composable get() = if (LocalAppDarkMode.current) Color(0xFFABB2C1) else Color(0xFF6A7386)
+    @Composable get() = if (isSystemInDarkTheme()) Color(0xFFABB2C1) else Color(0xFF6A7386)
 
 @Composable
 fun OcrResultScreen(
@@ -137,7 +136,7 @@ fun OcrResultScreen(
                             color = OcrTitle,
                         )
                         Text(
-                            text = "AI đã điền tên mạng và mật khẩu. Bạn có thể sửa trước khi kết nối.",
+                            text = "OCR đã đọc trong khung. Bạn có thể sửa lại trước khi kết nối.",
                             style = MaterialTheme.typography.bodyLarge,
                             color = OcrBody,
                         )
@@ -405,7 +404,7 @@ private fun StatusSurface(
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun OcrResultScreenPreview() {
-    SmartWifiAppTheme {
+    MaterialTheme {
         OcrResultScreen(
             state = MainUiState(
                 ocrText = "WiFi Name: Cafe_Wifi\nPassword: 12345678",
@@ -414,7 +413,7 @@ private fun OcrResultScreenPreview() {
                 sourceFormat = "ai_ocr",
                 confidence = 0.98,
                 scanSource = "Thu vien anh",
-                statusMessage = "AI da dien thong tin. Hay kiem tra SSID/mat khau roi bam Ket noi.",
+                statusMessage = "Hay kiem tra SSID/mat khau roi bam Ket noi.",
             ),
             onBackClick = {},
             onSsidChange = {},

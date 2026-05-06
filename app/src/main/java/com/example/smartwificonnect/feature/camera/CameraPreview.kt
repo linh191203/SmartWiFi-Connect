@@ -65,12 +65,14 @@ fun CameraPreview(
         fun bindCamera() {
             if (isDisposed) return
             val cameraProvider = cameraProviderFuture.get()
+            val targetRotation = previewView.display?.rotation ?: android.view.Surface.ROTATION_0
             val preview = Preview.Builder().build().apply {
                 setSurfaceProvider(previewView.surfaceProvider)
             }
             val imageAnalysis = analyzer?.let {
                 ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setTargetRotation(targetRotation)
                     .build()
                     .apply { setAnalyzer(analysisExecutor, it) }
             }
@@ -116,7 +118,10 @@ fun CameraPreview(
             runCatching {
                 if (cameraProviderFuture.isDone) {
                     analysisUseCase?.clearAnalyzer()
-                    val boundUseCases: List<UseCase> = listOfNotNull(previewUseCase, analysisUseCase)
+                    val boundUseCases: List<UseCase> = listOfNotNull(
+                        previewUseCase,
+                        analysisUseCase,
+                    )
                     if (boundUseCases.isNotEmpty()) {
                         cameraProviderFuture.get().unbind(*boundUseCases.toTypedArray())
                     }

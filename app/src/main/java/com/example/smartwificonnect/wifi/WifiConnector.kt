@@ -131,7 +131,9 @@ sealed class WifiConnectResult {
 enum class WifiConnectFailureReason {
     INVALID_INPUT,
     PERMISSION_DENIED,
+    WIFI_DISABLED,
     SSID_NOT_FOUND,
+    NOT_ACTUALLY_CONNECTED,
     AUTHENTICATION_OR_UNAVAILABLE,
     TIMEOUT,
     UNKNOWN,

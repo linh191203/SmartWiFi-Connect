@@ -1,19 +1,29 @@
 package com.example.smartwificonnect.navigation
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavType
 import androidx.navigation.NavHostController
 import androidx.navigation.navArgument
@@ -26,22 +36,20 @@ import com.example.smartwificonnect.MainUiState
 import com.example.smartwificonnect.MainViewModel
 import com.example.smartwificonnect.R
 import com.example.smartwificonnect.WifiConnectionState
+import com.example.smartwificonnect.data.local.AppConsentStore
 import com.example.smartwificonnect.feature.connection.ConnectionFailedScreen
 import com.example.smartwificonnect.feature.history.HistoryScreen
 import com.example.smartwificonnect.feature.home.HomePreviewData
 import com.example.smartwificonnect.feature.home.HomeScreen
 import com.example.smartwificonnect.feature.home.HomeUiState
-import com.example.smartwificonnect.feature.home.LoginScreen
-import com.example.smartwificonnect.feature.home.LoginUiState
 import com.example.smartwificonnect.feature.home.OnboardingScreen
 import com.example.smartwificonnect.feature.home.OnboardingUiState
 import com.example.smartwificonnect.feature.home.RecentNetworkType
 import com.example.smartwificonnect.feature.home.RecentNetworkUiModel
-import com.example.smartwificonnect.feature.home.RegisterScreen
-import com.example.smartwificonnect.feature.home.RegisterUiState
 import com.example.smartwificonnect.feature.manual.ManualEntryScreen
 import com.example.smartwificonnect.feature.networkdetail.NetworkDetailScreen
 import com.example.smartwificonnect.feature.permission.CameraPermissionScreen
+import com.example.smartwificonnect.feature.policy.ConsentScreen
 import com.example.smartwificonnect.feature.scanimage.ImagePickerScreen
 import com.example.smartwificonnect.feature.scanimage.ImageScanScreen
 import com.example.smartwificonnect.feature.scanimage.OcrResultScreen
@@ -58,7 +66,12 @@ fun AppNavHost(
     startDestination: String = Routes.ONBOARDING,
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
+    val lifecycleOwner = LocalLifecycleOwner.current
     val mainState by mainViewModel.state.collectAsState()
+    var hasAcceptedConsent by remember { mutableStateOf(AppConsentStore.hasAccepted(context)) }
+    val awaitingWifiEnable = remember { mutableStateOf(false) }
+    val wifiResumeCount = remember { mutableIntStateOf(0) }
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val failureTriggerRoutes = setOf(Routes.MANUAL_ENTRY, Routes.OCR_RESULT, Routes.NETWORK_DETAIL)
@@ -91,7 +104,11 @@ fun AppNavHost(
             mainViewModel.onImageSelectionCanceled()
             return@rememberLauncherForActivityResult
         }
-        mainViewModel.startOcrFromGallery(uri)
+        if (currentRoute == Routes.SCAN_QR) {
+            mainViewModel.startQrFromGallery(uri)
+        } else {
+            mainViewModel.startOcrFromGallery(uri)
+        }
         openOcrResult()
     }
     val nearbyWifiPermissionLauncher = rememberLauncherForActivityResult(
@@ -145,6 +162,47 @@ fun AppNavHost(
         }
     }
     val homeState = buildHomeState(mainState)
+    val openAutoConnectSetting: () -> Unit = {
+        when {
+            !mainState.isWifiEnabled -> openSystemNetworkSettings()
+            mainViewModel.openAutoConnectTargetFromSettings() -> navController.navigate(Routes.NETWORK_DETAIL)
+            else -> Toast.makeText(
+                context,
+                "Chua co mang da luu nao o gan day de tu dong ket noi.",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+    val openPriorityNetworkSetting: () -> Unit = {
+        when {
+            !mainState.isWifiEnabled -> openSystemNetworkSettings()
+            mainViewModel.openPriorityNetworkFromSettings() -> navController.navigate(Routes.NETWORK_DETAIL)
+            else -> Toast.makeText(
+                context,
+                "Chua tim thay mang uu tien nao trong khu vuc hien tai.",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        mainViewModel.refreshWifiEnvironment(recalculateFuzzy = true)
+    }
+
+    DisposableEffect(lifecycleOwner, mainViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                mainViewModel.refreshWifiEnvironment(recalculateFuzzy = true)
+                if (awaitingWifiEnable.value) {
+                    wifiResumeCount.intValue += 1
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     LaunchedEffect(mainState.wifiConnectionState, currentRoute) {
         when (mainState.wifiConnectionState) {
@@ -168,6 +226,36 @@ fun AppNavHost(
         }
     }
 
+    LaunchedEffect(mainState.sharedLinkRequestId, currentRoute, hasAcceptedConsent) {
+        if (!hasAcceptedConsent) return@LaunchedEffect
+        if (mainState.sharedLinkRequestId <= 0L || currentRoute == null) return@LaunchedEffect
+        if (currentRoute != Routes.OCR_RESULT) {
+            openOcrResult()
+        }
+    }
+
+    LaunchedEffect(mainState.isWifiEnabled, wifiResumeCount.intValue) {
+        when {
+            mainState.isWifiEnabled -> {
+                awaitingWifiEnable.value = false
+            }
+
+            !awaitingWifiEnable.value -> {
+                awaitingWifiEnable.value = true
+                openSystemNetworkSettings()
+            }
+
+            wifiResumeCount.intValue > 0 -> {
+                Toast.makeText(
+                    context,
+                    "Can bat Wi-Fi de su dung ung dung. App se dong lai.",
+                    Toast.LENGTH_LONG,
+                ).show()
+                activity?.finishAffinity()
+            }
+        }
+    }
+
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -178,78 +266,48 @@ fun AppNavHost(
                 titleLineTwo = stringResource(R.string.onboarding_title_line_2),
                 subtitle = stringResource(R.string.onboarding_subtitle),
                 ctaText = stringResource(R.string.onboarding_cta_start),
-                loginPrompt = stringResource(R.string.onboarding_login_prompt),
                 appName = stringResource(R.string.onboarding_brand_name),
                 appTagline = stringResource(R.string.onboarding_brand_tagline),
             )
             OnboardingScreen(
                 state = onboardingState,
                 onStartClick = {
-                    navController.navigate(Routes.HOME) {
-                        popUpTo(Routes.ONBOARDING) { inclusive = true }
+                    val destination = when {
+                        !hasAcceptedConsent -> Routes.CONSENT
+                        mainState.sharedLinkRequestId > 0L -> Routes.OCR_RESULT
+                        else -> Routes.HOME
                     }
-                },
-                onLoginClick = {
-                    navController.navigate(Routes.LOGIN)
+                    navController.navigate(destination) {
+                        if (destination == Routes.HOME) {
+                            popUpTo(Routes.ONBOARDING) { inclusive = true }
+                        }
+                    }
                 },
             )
         }
 
-        composable(Routes.LOGIN) {
-            val loginState = LoginUiState(
-                screenTitle = stringResource(R.string.login_screen_title),
-                brandTitle = stringResource(R.string.login_brand_title),
-                brandSubtitle = stringResource(R.string.login_brand_subtitle),
-                emailLabel = stringResource(R.string.login_email_label),
-                emailPlaceholder = stringResource(R.string.login_email_placeholder),
-                passwordLabel = stringResource(R.string.login_password_label),
-                passwordPlaceholder = stringResource(R.string.login_password_placeholder),
-                forgotPassword = stringResource(R.string.login_forgot_password),
-                loginButton = stringResource(R.string.login_cta),
-                socialDivider = stringResource(R.string.login_social_divider),
-                noAccountPrefix = stringResource(R.string.login_no_account_prefix),
-                signUpNow = stringResource(R.string.login_sign_up_now),
-            )
-            LoginScreen(
-                state = loginState,
-                onLoginClick = {
-                    navController.navigate(Routes.HOME) {
+        composable(Routes.CONSENT) {
+            ConsentScreen(
+                onAcceptClick = {
+                    AppConsentStore.markAccepted(context)
+                    hasAcceptedConsent = true
+                    val destination = if (mainState.sharedLinkRequestId > 0L) {
+                        Routes.OCR_RESULT
+                    } else {
+                        Routes.HOME
+                    }
+                    navController.navigate(destination) {
                         popUpTo(Routes.ONBOARDING) { inclusive = true }
                     }
                 },
-                onSignUpClick = {
-                    navController.navigate(Routes.REGISTER)
+                onDeclineClick = {
+                    Toast.makeText(
+                        context,
+                        "Ban da tu choi chinh sach. Ung dung se dong lai.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    activity?.finishAffinity()
                 },
-            )
-        }
-
-        composable(Routes.REGISTER) {
-            val registerState = RegisterUiState(
-                screenTitle = stringResource(R.string.register_screen_title),
-                brandTitle = stringResource(R.string.register_brand_title),
-                brandSubtitle = stringResource(R.string.register_brand_subtitle),
-                fullNameLabel = stringResource(R.string.register_full_name_label),
-                fullNamePlaceholder = stringResource(R.string.register_full_name_placeholder),
-                emailLabel = stringResource(R.string.register_email_label),
-                emailPlaceholder = stringResource(R.string.register_email_placeholder),
-                passwordLabel = stringResource(R.string.register_password_label),
-                passwordPlaceholder = stringResource(R.string.register_password_placeholder),
-                confirmPasswordLabel = stringResource(R.string.register_confirm_password_label),
-                confirmPasswordPlaceholder = stringResource(R.string.register_confirm_password_placeholder),
-                registerButton = stringResource(R.string.register_cta),
-                socialDivider = stringResource(R.string.register_social_divider),
-                hasAccountPrefix = stringResource(R.string.register_has_account_prefix),
-                loginNow = stringResource(R.string.register_login_now),
-            )
-            RegisterScreen(
-                state = registerState,
-                onBackClick = { navController.popBackStack() },
-                onRegisterClick = {
-                    navController.navigate(Routes.HOME) {
-                        popUpTo(Routes.ONBOARDING) { inclusive = true }
-                    }
-                },
-                onLoginNowClick = { navController.popBackStack() },
             )
         }
 
@@ -467,7 +525,11 @@ fun AppNavHost(
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 isDarkModeEnabled = mainState.isDarkModeEnabled,
+                autoConnectSubtitle = buildAutoConnectSettingSubtitle(mainState),
+                priorityNetworkSubtitle = buildPrioritySettingSubtitle(mainState),
                 onDarkModeChange = mainViewModel::onDarkModeChanged,
+                onAutoConnectClick = openAutoConnectSetting,
+                onPriorityNetworkClick = openPriorityNetworkSetting,
                 onHomeClick = openHome,
                 onScanClick = { openRouteWithCameraPermission(Routes.SCAN_QR) },
                 onShareClick = { navController.navigate(Routes.SHARE) },
@@ -476,6 +538,7 @@ fun AppNavHost(
             )
         }
     }
+
 }
 
 private fun nearbyWifiPermissions(): List<String> {
@@ -541,10 +604,49 @@ private fun buildHomeState(mainState: MainUiState): HomeUiState {
         }
     val recentNetworks = if (recentFromHistory.isNotEmpty()) recentFromHistory else fallback.recentNetworks
     return fallback.copy(
-        connectivityStatus = connectedSsid?.let { "Đang kết nối tới $it." } ?: fallback.connectivityStatus,
+        connectivityStatus = when {
+            !mainState.isWifiEnabled -> "Wi-Fi dang tat. Bat Wi-Fi de quet va ket noi."
+            connectedSsid != null -> "Dang ket noi toi $connectedSsid."
+            else -> fallback.connectivityStatus
+        },
         recentNetworks = recentNetworks,
     )
 }
+
+private fun buildAutoConnectSettingSubtitle(mainState: MainUiState): String {
+    val connectedSsid = (mainState.wifiConnectionState as? WifiConnectionState.Connected)?.ssid
+    if (!mainState.isWifiEnabled) {
+        return "Bat Wi-Fi de tim mang da luu va tiep tuc ket noi tu dong."
+    }
+    if (!connectedSsid.isNullOrBlank()) {
+        return "Dang ket noi thuc te toi $connectedSsid."
+    }
+    val nearbySaved = strongestSavedNearbyNetwork(mainState)
+    return if (nearbySaved != null) {
+        "Da tim thay mang da luu '${nearbySaved.ssid}' o gan day."
+    } else {
+        "Chua thay mang da luu nao o gan day. Hay quet hoac nhap Wi-Fi truoc."
+    }
+}
+
+private fun buildPrioritySettingSubtitle(mainState: MainUiState): String {
+    if (!mainState.isWifiEnabled) {
+        return "Bat Wi-Fi de doi chieu mang uu tien theo thuc te."
+    }
+    val strongest = strongestSavedNearbyNetwork(mainState)
+    return if (strongest != null) {
+        "Mang uu tien hien tai: ${strongest.ssid} (${strongest.signalLevel}/4)."
+    } else {
+        "Chua co mang uu tien kha dung. App se goi y khi co mang da luu xuat hien."
+    }
+}
+
+private fun strongestSavedNearbyNetwork(mainState: MainUiState) =
+    mainState.nearbyNetworks
+        .filter { nearby ->
+            mainState.historyRecords.any { it.ssid.equals(nearby.ssid, ignoreCase = true) }
+        }
+        .maxByOrNull { it.signalLevel }
 
 private fun Long.toRelativeLabel(): String {
     val diffMillis = System.currentTimeMillis() - this

@@ -1,61 +1,60 @@
 package com.example.smartwificonnect.feature.home
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.smartwificonnect.ui.theme.LocalAppDarkMode
-import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.net.URL
-
-private const val ONBOARDING_ILLUSTRATION_URL =
-    "https://lh3.googleusercontent.com/aida-public/AB6AXuBn6i_bVlMEnVLNbc5kIoFpd0RxFeQZqM9KWQvUoI7q8BsTHwCRxzwBpEWrOKCgTuog3BeyI-vzjTTM5rt91vnKUCsCevVULJTsmaSKbJ9yEtmMOuzIS9aSIJ02sZIE73W_o7DQ8LCtB947sKUxE9KDWz8qzos670kubnX56UiP0_3SNJPc1H8DOdtk3Nw7lhLMmAWfpZKD-wzDak2cJDZrlv1SVqpRlDMSG3Ypyf4A5Lw1LCAVqY8JSwZNfbe5iErgwEtZ6Qaoi8s"
+import com.example.smartwificonnect.R
+import kotlinx.coroutines.delay
 
 @Composable
 fun OnboardingScreen(
     state: OnboardingUiState,
     onStartClick: () -> Unit,
-    onLoginClick: () -> Unit,
 ) {
-    val dark = LocalAppDarkMode.current
+    val dark = isSystemInDarkTheme()
     val screenBg = if (dark) Color(0xFF10131B) else Color(0xFFF7F9FC)
     val cardBg = if (dark) Color(0xFF1F2430) else Color.White
     val brand = if (dark) Color(0xFF8D90FF) else Color(0xFF4A4FD3)
@@ -83,7 +82,6 @@ fun OnboardingScreen(
                     OnboardingCardContent(
                         state = state,
                         onStartClick = onStartClick,
-                        onLoginClick = onLoginClick,
                     )
                 }
             }
@@ -125,15 +123,40 @@ fun OnboardingScreen(
 private fun OnboardingCardContent(
     state: OnboardingUiState,
     onStartClick: () -> Unit,
-    onLoginClick: () -> Unit,
 ) {
+    val slideImages = remember {
+        listOf(
+            R.drawable.onboarding_wifi_slide_1,
+            R.drawable.onboarding_wifi_slide_2,
+            R.drawable.onboarding_wifi_slide_3,
+        )
+    }
+    var currentPage by rememberSaveable { mutableIntStateOf(0) }
+    var previousPage by rememberSaveable { mutableIntStateOf(0) }
+
+    LaunchedEffect(slideImages.size, currentPage) {
+        while (slideImages.isNotEmpty()) {
+            delay(3000L)
+            previousPage = currentPage
+            currentPage = (currentPage + 1) % slideImages.size
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 24.dp, vertical = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        TopVisualArea()
+        TopVisualArea(
+            images = slideImages,
+            currentPage = currentPage,
+            previousPage = previousPage,
+            onPageChange = { nextPage ->
+                previousPage = currentPage
+                currentPage = nextPage
+            },
+        )
         Spacer(modifier = Modifier.height(28.dp))
 
         Text(
@@ -165,7 +188,7 @@ private fun OnboardingCardContent(
         )
 
         Spacer(modifier = Modifier.height(24.dp))
-        PagerDots(pageIndex = state.pageIndex, totalPages = state.totalPages)
+        PagerDots(pageIndex = currentPage, totalPages = slideImages.size)
         Spacer(modifier = Modifier.height(28.dp))
 
         Button(
@@ -183,50 +206,69 @@ private fun OnboardingCardContent(
                 fontSize = 17.sp,
             )
         }
-
-        Spacer(modifier = Modifier.height(18.dp))
-        Text(
-            text = state.loginPrompt,
-            color = Color(0xFF4A4FD3),
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.clickable(onClick = onLoginClick),
-        )
     }
 }
 
 @Composable
-private fun TopVisualArea() {
+private fun TopVisualArea(
+    images: List<Int>,
+    currentPage: Int,
+    previousPage: Int,
+    onPageChange: (Int) -> Unit,
+) {
+    var dragDistance by remember { mutableFloatStateOf(0f) }
+    val direction = if (currentPage >= previousPage) 1 else -1
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(290.dp),
+            .height(290.dp)
+            .pointerInput(images.size, currentPage) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        val threshold = 72f
+                        when {
+                            dragDistance <= -threshold -> {
+                                onPageChange((currentPage + 1) % images.size)
+                            }
+
+                            dragDistance >= threshold -> {
+                                onPageChange((currentPage - 1 + images.size) % images.size)
+                            }
+                        }
+                        dragDistance = 0f
+                    },
+                    onDragCancel = {
+                        dragDistance = 0f
+                    },
+                    onHorizontalDrag = { _, dragAmount ->
+                        dragDistance += dragAmount
+                    },
+                )
+            },
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(36.dp))
-                .background(Color(0xFFECEEF1)),
-        ) {
-            val bitmap by rememberNetworkBitmap(url = ONBOARDING_ILLUSTRATION_URL)
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = "Minh họa kết nối wifi toàn cầu",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color(0xFFD6E2E1), Color(0xFFCAD8D7)),
-                            ),
-                    ),
-                )
-            }
+        AnimatedContent(
+            targetState = currentPage,
+            transitionSpec = {
+                val forward = if (targetState == initialState) {
+                    direction >= 0
+                } else {
+                    ((targetState - initialState + images.size) % images.size) == 1
+                }
+                val offset = { fullWidth: Int -> if (forward) fullWidth else -fullWidth }
+                slideInHorizontally(initialOffsetX = offset) + fadeIn() togetherWith
+                    slideOutHorizontally(targetOffsetX = { -offset(it) }) + fadeOut()
+            },
+            label = "onboarding-slideshow",
+        ) { page ->
+            Image(
+                painter = painterResource(id = images[page]),
+                contentDescription = "Minh hoa auto connect Wi-Fi",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(36.dp)),
+            )
         }
     }
 }
@@ -253,24 +295,13 @@ private fun PagerDots(
     }
 }
 
-@Composable
-private fun rememberNetworkBitmap(url: String): androidx.compose.runtime.State<Bitmap?> =
-    produceState<Bitmap?>(initialValue = null, key1 = url) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                URL(url).openStream().use(BitmapFactory::decodeStream)
-            }.getOrNull()
-        }
-    }
-
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
 private fun OnboardingScreenPreview() {
-    SmartWifiAppTheme {
+    MaterialTheme {
         OnboardingScreen(
             state = OnboardingPreviewData.default,
             onStartClick = {},
-            onLoginClick = {},
         )
     }
 }

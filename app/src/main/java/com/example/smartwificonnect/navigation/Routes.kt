@@ -2,8 +2,7 @@ package com.example.smartwificonnect.navigation
 
 object Routes {
     const val ONBOARDING = "onboarding"
-    const val LOGIN = "login"
-    const val REGISTER = "register"
+    const val CONSENT = "consent"
     const val HOME = "home"
     const val CAMERA_PERMISSION = "camera_permission"
     const val CAMERA_PERMISSION_PATTERN = "$CAMERA_PERMISSION/{next}"

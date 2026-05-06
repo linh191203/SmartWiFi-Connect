@@ -7,6 +7,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import com.example.smartwificonnect.data.local.AppConsentStore
 import com.example.smartwificonnect.navigation.AppNavHost
 import com.example.smartwificonnect.navigation.Routes
 import com.example.smartwificonnect.ui.theme.SmartWifiAppTheme
@@ -16,11 +17,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val startDestination = if (intent.isSmartWifiJoinLink()) {
+        val consentAccepted = AppConsentStore.hasAccepted(this)
+        val isJoinLink = intent.isSmartWifiJoinLink()
+        if (isJoinLink) {
             mainViewModel.consumeSharedWifiLink(intent?.data)
-            Routes.OCR_RESULT
-        } else {
-            Routes.ONBOARDING
+        }
+        val startDestination = when {
+            !consentAccepted -> Routes.ONBOARDING
+            isJoinLink -> Routes.OCR_RESULT
+            else -> Routes.ONBOARDING
         }
         setContent {
             val mainState by mainViewModel.state.collectAsState()

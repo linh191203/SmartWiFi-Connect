@@ -8,6 +8,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -20,20 +21,30 @@ import com.example.smartwificonnect.data.WifiRepository
 import com.example.smartwificonnect.data.local.SavedWifiRecord
 import com.example.smartwificonnect.feature.home.RecentNetworkType
 import com.example.smartwificonnect.feature.home.RecentNetworkUiModel
+import com.example.smartwificonnect.ocr.WifiOcrCredentials
 import com.example.smartwificonnect.ocr.WifiOcrProcessor
+import com.example.smartwificonnect.ocr.WifiOcrScanResult
+import com.google.mlkit.vision.barcode.BarcodeScannerOptions
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
 import com.example.smartwificonnect.wifi.WifiConnectFailureReason
 import com.example.smartwificonnect.wifi.WifiConnectResult
 import com.example.smartwificonnect.wifi.WifiConnector
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private const val OCR_LOG_TAG = "SmartWifiOcr"
 
 class MainViewModel @JvmOverloads constructor(
     application: Application,
@@ -49,6 +60,7 @@ class MainViewModel @JvmOverloads constructor(
     init {
         loadLatestSavedWifi()
         refreshHistory()
+        refreshWifiEnvironment()
     }
 
     fun onDarkModeChanged(enabled: Boolean) {
@@ -59,16 +71,15 @@ class MainViewModel @JvmOverloads constructor(
         val current = _state.value
         val savedRecord = current.historyRecords.firstOrNull { it.id == network.sourceRecordId }
             ?: current.historyRecords.firstOrNull { it.ssid.equals(network.name, ignoreCase = true) }
-        val scannedLevel = getAvailableNearbyNetworks()
+        val scannedNearby = getAvailableNearbyNetworks()
             .firstOrNull { it.ssid.equals(network.name, ignoreCase = true) }
-            ?.signalLevel
         val detail = savedRecord?.toNetworkDetailUiModel(
             origin = NetworkDetailOrigin.HOME,
             isConnected = isCurrentNetworkConnected(network.name) || network.isConnected,
-            scannedSignalLevel = scannedLevel,
+            scannedNearby = scannedNearby,
         ) ?: network.toNetworkDetailUiModel(
             origin = NetworkDetailOrigin.HOME,
-            scannedSignalLevel = scannedLevel,
+            scannedNearby = scannedNearby,
         )
 
         _state.update {
@@ -81,15 +92,14 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     fun openNetworkDetailFromHistory(record: SavedWifiRecord) {
-        val scannedLevel = getAvailableNearbyNetworks()
+        val scannedNearby = getAvailableNearbyNetworks()
             .firstOrNull { it.ssid.equals(record.ssid, ignoreCase = true) }
-            ?.signalLevel
         _state.update {
             it.copy(
                 selectedNetworkDetail = record.toNetworkDetailUiModel(
                     origin = NetworkDetailOrigin.HISTORY,
                     isConnected = isCurrentNetworkConnected(record.ssid),
-                    scannedSignalLevel = scannedLevel,
+                    scannedNearby = scannedNearby,
                 ),
                 selectedNetworkTelemetry = null,
             )
@@ -131,6 +141,74 @@ class MainViewModel @JvmOverloads constructor(
             )
         }
         connectToParsedWifi()
+    }
+
+    fun openAutoConnectTargetFromSettings(): Boolean {
+        val detail = buildBestSavedNearbyNetworkDetail(
+            preferredSsid = getCurrentConnectedSsid(),
+            origin = NetworkDetailOrigin.HOME,
+        ) ?: return false
+        _state.update {
+            it.copy(
+                selectedNetworkDetail = detail,
+                selectedNetworkTelemetry = null,
+            )
+        }
+        refreshSelectedNetworkTelemetry()
+        return true
+    }
+
+    fun openPriorityNetworkFromSettings(): Boolean {
+        val detail = buildBestSavedNearbyNetworkDetail(
+            preferredSsid = null,
+            origin = NetworkDetailOrigin.HOME,
+        ) ?: return false
+        _state.update {
+            it.copy(
+                selectedNetworkDetail = detail,
+                selectedNetworkTelemetry = null,
+            )
+        }
+        refreshSelectedNetworkTelemetry()
+        return true
+    }
+
+    private fun buildBestSavedNearbyNetworkDetail(
+        preferredSsid: String?,
+        origin: NetworkDetailOrigin,
+    ): NetworkDetailUiModel? {
+        val current = _state.value
+        val nearbyBySsid = getAvailableNearbyNetworks()
+            .associateBy { it.ssid.lowercase(Locale.ROOT) }
+
+        preferredSsid?.takeIf { it.isNotBlank() }?.let { preferred ->
+            current.historyRecords.firstOrNull { it.ssid.equals(preferred, ignoreCase = true) }?.let { record ->
+                return record.toNetworkDetailUiModel(
+                    origin = origin,
+                    isConnected = isCurrentNetworkConnected(record.ssid),
+                    scannedNearby = nearbyBySsid[record.ssid.lowercase(Locale.ROOT)],
+                )
+            }
+        }
+
+        return current.historyRecords
+            .filter { it.ssid.isNotBlank() }
+            .mapNotNull { record ->
+                nearbyBySsid[record.ssid.lowercase(Locale.ROOT)]?.let { nearby ->
+                    record to nearby
+                }
+            }
+            .maxWithOrNull(
+                compareBy<Pair<SavedWifiRecord, NearbyNetwork>> { it.second.signalLevel }
+                    .thenByDescending { it.first.createdAtMillis },
+            )
+            ?.let { (record, nearby) ->
+                record.toNetworkDetailUiModel(
+                    origin = origin,
+                    isConnected = isCurrentNetworkConnected(record.ssid),
+                    scannedNearby = nearby,
+                )
+            }
     }
 
     fun deleteSelectedNetworkDetail() {
@@ -198,14 +276,17 @@ class MainViewModel @JvmOverloads constructor(
     fun connectToParsedWifi() {
         val current = _state.value
         val ssid = current.ssid.trim()
-        if (ssid.isEmpty()) {
+        val password = current.password.trim()
+
+        if (!isWifiEnabledInSystem()) {
             _state.update {
                 it.copy(
+                    isWifiEnabled = false,
                     wifiConnectionState = WifiConnectionState.Failed(
-                        reason = WifiConnectFailureReason.INVALID_INPUT,
-                        message = "SSID trong. Hay parse OCR hoac nhap tay SSID truoc khi ket noi.",
+                        reason = WifiConnectFailureReason.WIFI_DISABLED,
+                        message = "Wi-Fi dang tat. Hay bat Wi-Fi roi thu lai.",
                     ),
-                    statusMessage = "Chua co SSID de ket noi.",
+                    statusMessage = "Wi-Fi dang tat. Hay bat Wi-Fi de tiep tuc.",
                 )
             }
             return
@@ -230,130 +311,267 @@ class MainViewModel @JvmOverloads constructor(
         }
 
         val scannedNearby = getScannedNearbyNetworks()
-        val hasSsidInRange = scannedNearby.any { it.ssid.equals(ssid, ignoreCase = true) }
-        if (scannedNearby.isNotEmpty() && !hasSsidInRange) {
-            _state.update {
-                it.copy(
-                    wifiConnectionState = WifiConnectionState.Failed(
-                        reason = WifiConnectFailureReason.SSID_NOT_FOUND,
-                        message = "Khong thay SSID '$ssid' trong cac mang Wi-Fi xung quanh.",
-                    ),
-                    statusMessage = "SSID khong co san quanh day. Hay kiem tra lai ten mang hoac test tren may that.",
+        if (ssid.isEmpty()) {
+            if (password.isBlank()) {
+                _state.update {
+                    it.copy(
+                        wifiConnectionState = WifiConnectionState.Failed(
+                            reason = WifiConnectFailureReason.INVALID_INPUT,
+                            message = "Chua co du SSID hoac mat khau de ket noi.",
+                        ),
+                        statusMessage = "Chua co du thong tin Wi-Fi de ket noi.",
+                    )
+                }
+                return
+            }
+
+            if (scannedNearby.isEmpty()) {
+                _state.update {
+                    it.copy(
+                        wifiConnectionState = WifiConnectionState.Failed(
+                            reason = WifiConnectFailureReason.SSID_NOT_FOUND,
+                            message = "Khong co Wi-Fi gan day de thu voi mat khau vua quet.",
+                        ),
+                        statusMessage = "Khong co Wi-Fi nao o gan day de thu ket noi bang mat khau vua quet.",
+                    )
+                }
+                return
+            }
+
+            viewModelScope.launch {
+                connectByPasswordAcrossNearbyNetworks(
+                    current = current,
+                    nearbyNetworks = scannedNearby,
                 )
             }
             return
         }
 
+        val targetNetwork = resolveBestConnectionTarget(ssid, scannedNearby)
+        if (scannedNearby.isNotEmpty() && targetNetwork == null) {
+            _state.update {
+                it.copy(
+                    wifiConnectionState = WifiConnectionState.Failed(
+                        reason = WifiConnectFailureReason.SSID_NOT_FOUND,
+                        message = "Khong thay mang Wi-Fi phu hop voi '$ssid' trong cac mang xung quanh.",
+                    ),
+                    statusMessage = "Khong tim thay mang gan dung voi OCR trong danh sach Wi-Fi thuc te quanh day.",
+                )
+            }
+            return
+        }
+        val resolvedSsid = targetNetwork?.ssid ?: ssid
+        val usedFuzzyMatch = !resolvedSsid.equals(ssid, ignoreCase = true)
+
         viewModelScope.launch {
             _state.update {
                 it.copy(
-                    wifiConnectionState = WifiConnectionState.Connecting(ssid = ssid),
-                    statusMessage = "Dang ket noi Wi-Fi $ssid ...",
+                    ssid = resolvedSsid,
+                    ssidSuggestion = targetNetwork
+                        ?.takeIf { usedFuzzyMatch }
+                        ?.let { match ->
+                            SsidSuggestionState.Found(
+                                bestMatch = match.ssid,
+                                score = match.score,
+                            )
+                        } ?: SsidSuggestionState.Hidden,
+                    wifiConnectionState = WifiConnectionState.Connecting(ssid = resolvedSsid),
+                    statusMessage = if (usedFuzzyMatch) {
+                        "Dang ket noi mang gan dung nhat '$resolvedSsid' tu OCR '$ssid' ..."
+                    } else {
+                        "Dang ket noi Wi-Fi $resolvedSsid ..."
+                    },
                 )
             }
 
-            val result = runCatching {
-                withTimeout(20_000L) {
-                    connectWifi(
-                        ssid = ssid,
-                        password = current.password.takeIf { it.isNotBlank() },
-                        security = current.security.takeIf { it.isNotBlank() },
-                    )
-                }
-            }.getOrElse { throwable ->
-                if (throwable is TimeoutCancellationException) {
-                    WifiConnectResult.Failed(
-                        reason = WifiConnectFailureReason.TIMEOUT,
-                        message = "Timeout khi ket noi Wi-Fi.",
-                    )
-                } else {
-                    WifiConnectResult.Failed(
-                        reason = WifiConnectFailureReason.UNKNOWN,
-                        message = throwable.message,
-                    )
-                }
-            }
+            val result = performWifiConnectionAttempt(
+                ssid = resolvedSsid,
+                password = current.password.takeIf { it.isNotBlank() },
+                security = current.security.takeIf { it.isNotBlank() },
+            )
 
             when (result) {
                 is WifiConnectResult.Success -> {
-                    val localSavedRecord = runCatching {
-                        repository.saveConnectedNetworkLocal(
-                            baseUrl = current.baseUrl,
-                            ocrText = current.ocrText.ifBlank { "Connected from OCR Result" },
-                            ssid = result.ssid,
-                            password = current.password.takeIf { it.isNotBlank() },
-                            sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
-                            confidence = current.confidence,
-                        )
-                    }.getOrNull()
-
-                    if (localSavedRecord != null) {
-                        _state.update { state ->
-                            state.copy(
-                                historyRecords = listOf(localSavedRecord) +
-                                    state.historyRecords.filterNot { it.id == localSavedRecord.id },
-                            )
-                        }
-                    }
-
-                    val savedToApi = runCatching {
-                        repository.saveConnectedNetwork(
-                            baseUrl = current.baseUrl,
-                            request = SaveNetworkRequest(
-                                ssid = result.ssid,
-                                password = current.password.takeIf { it.isNotBlank() },
-                                security = current.security.takeIf { it.isNotBlank() },
-                                sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
-                                confidence = current.confidence,
-                                connectedAtEpochMs = currentTimeMillis(),
-                            ),
-                        )
-                    }.getOrDefault(false)
-
-                    val successMessage = when {
-                        localSavedRecord != null && savedToApi ->
-                            "Ket noi Wi-Fi thanh cong: ${result.ssid}. Da luu local + server."
-                        localSavedRecord != null && !savedToApi ->
-                            "Ket noi Wi-Fi thanh cong: ${result.ssid}. Da luu local, server chua san sang."
-                        localSavedRecord == null && savedToApi ->
-                            "Ket noi Wi-Fi thanh cong: ${result.ssid}. Da luu len server."
-                        else ->
-                            "Ket noi Wi-Fi thanh cong: ${result.ssid}. Chua luu duoc lich su (thu lai sau)."
-                    }
-                    _state.update {
-                        it.copy(
-                            wifiConnectionState = WifiConnectionState.Connected(ssid = result.ssid),
-                            statusMessage = successMessage,
-                        )
+                    if (!finalizeSuccessfulWifiConnection(current, resolvedSsid)) {
+                        return@launch
                     }
                 }
 
                 is WifiConnectResult.Failed -> {
-                    val uiMessage = when (result.reason) {
-                        WifiConnectFailureReason.PERMISSION_DENIED ->
-                            "Thieu quyen Wi-Fi/Location. Hay cap quyen roi thu lai."
-                        WifiConnectFailureReason.SSID_NOT_FOUND ->
-                            "Khong tim thay SSID xung quanh. Hay dung gan router hon hoac test tren may that."
-                        WifiConnectFailureReason.AUTHENTICATION_OR_UNAVAILABLE ->
-                            "Khong ket noi duoc. Co the sai mat khau hoac mang khong kha dung."
-                        WifiConnectFailureReason.TIMEOUT ->
-                            "Ket noi qua lau (timeout). Thu lai hoac dung gan router hon."
-                        WifiConnectFailureReason.INVALID_INPUT ->
-                            "Du lieu ket noi khong hop le."
-                        WifiConnectFailureReason.UNKNOWN ->
-                            result.message ?: "Khong ket noi duoc Wi-Fi."
-                    }
-                    _state.update {
-                        it.copy(
-                            wifiConnectionState = WifiConnectionState.Failed(
-                                reason = result.reason,
-                                message = uiMessage,
-                            ),
-                            statusMessage = uiMessage,
-                        )
-                    }
+                    publishWifiFailure(result)
                 }
             }
+        }
+    }
+
+    private suspend fun connectByPasswordAcrossNearbyNetworks(
+        current: MainUiState,
+        nearbyNetworks: List<NearbyNetwork>,
+    ) {
+        val password = current.password.takeIf { it.isNotBlank() }
+        val security = current.security.takeIf { it.isNotBlank() }
+        val sortedNetworks = nearbyNetworks.sortedByDescending { it.signalLevel }
+
+        for ((index, network) in sortedNetworks.withIndex()) {
+            _state.update {
+                it.copy(
+                    ssid = network.ssid,
+                    wifiConnectionState = WifiConnectionState.Connecting(ssid = network.ssid),
+                    statusMessage = "Dang thu ${index + 1}/${sortedNetworks.size}: ${network.ssid} bang mat khau vua quet...",
+                    ssidSuggestion = SsidSuggestionState.Hidden,
+                )
+            }
+
+            when (performWifiConnectionAttempt(network.ssid, password, security)) {
+                is WifiConnectResult.Success -> {
+                    val currentWithResolvedSsid = current.copy(ssid = network.ssid)
+                    if (finalizeSuccessfulWifiConnection(currentWithResolvedSsid, network.ssid)) {
+                        return
+                    }
+                }
+
+                is WifiConnectResult.Failed -> Unit
+            }
+        }
+
+        _state.update {
+            it.copy(
+                wifiConnectionState = WifiConnectionState.Failed(
+                    reason = WifiConnectFailureReason.AUTHENTICATION_OR_UNAVAILABLE,
+                    message = "Da thu cac Wi-Fi gan day bang mat khau vua quet nhung chua co mang nao ket noi duoc.",
+                ),
+                statusMessage = "Da thu ${sortedNetworks.size} Wi-Fi gan day tu manh den yeu, nhung chua co mang nao hop voi mat khau vua quet.",
+            )
+        }
+    }
+
+    private suspend fun performWifiConnectionAttempt(
+        ssid: String,
+        password: String?,
+        security: String?,
+    ): WifiConnectResult {
+        return runCatching {
+            withTimeout(20_000L) {
+                connectWifi(
+                    ssid = ssid,
+                    password = password,
+                    security = security,
+                )
+            }
+        }.getOrElse { throwable ->
+            if (throwable is TimeoutCancellationException) {
+                WifiConnectResult.Failed(
+                    reason = WifiConnectFailureReason.TIMEOUT,
+                    message = "Timeout khi ket noi Wi-Fi.",
+                )
+            } else {
+                WifiConnectResult.Failed(
+                    reason = WifiConnectFailureReason.UNKNOWN,
+                    message = throwable.message,
+                )
+            }
+        }
+    }
+
+    private suspend fun finalizeSuccessfulWifiConnection(
+        current: MainUiState,
+        resolvedSsid: String,
+    ): Boolean {
+        val isActuallyConnected = waitForActualWifiConnection(resolvedSsid)
+        if (!isActuallyConnected) {
+            _state.update {
+                it.copy(
+                    wifiConnectionState = WifiConnectionState.Failed(
+                        reason = WifiConnectFailureReason.NOT_ACTUALLY_CONNECTED,
+                        message = "App da gui yeu cau ket noi nhung may chua vao duoc Wi-Fi '$resolvedSsid'.",
+                    ),
+                    statusMessage = "He thong chua vao duoc Wi-Fi '$resolvedSsid' tren may that. Hay kiem tra mat khau, man hinh xac nhan he thong hoac lai gan router hon.",
+                )
+            }
+            return false
+        }
+
+        val localSavedRecord = runCatching {
+            repository.saveConnectedNetworkLocal(
+                baseUrl = current.baseUrl,
+                ocrText = current.ocrText.ifBlank { "Connected from OCR Result" },
+                ssid = resolvedSsid,
+                password = current.password.takeIf { it.isNotBlank() },
+                sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
+                confidence = current.confidence,
+            )
+        }.getOrNull()
+
+        if (localSavedRecord != null) {
+            _state.update { state ->
+                state.copy(
+                    historyRecords = listOf(localSavedRecord) +
+                        state.historyRecords.filterNot { it.id == localSavedRecord.id },
+                )
+            }
+        }
+
+        val savedToApi = runCatching {
+            repository.saveConnectedNetwork(
+                baseUrl = current.baseUrl,
+                request = SaveNetworkRequest(
+                    ssid = resolvedSsid,
+                    password = current.password.takeIf { it.isNotBlank() },
+                    security = current.security.takeIf { it.isNotBlank() },
+                    sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
+                    confidence = current.confidence,
+                    connectedAtEpochMs = currentTimeMillis(),
+                ),
+            )
+        }.getOrDefault(false)
+
+        val successMessage = when {
+            localSavedRecord != null && savedToApi ->
+                "Ket noi Wi-Fi thanh cong: $resolvedSsid. Da luu local + server."
+            localSavedRecord != null && !savedToApi ->
+                "Ket noi Wi-Fi thanh cong: $resolvedSsid. Da luu local, server chua san sang."
+            localSavedRecord == null && savedToApi ->
+                "Ket noi Wi-Fi thanh cong: $resolvedSsid. Da luu len server."
+            else ->
+                "Ket noi Wi-Fi thanh cong: $resolvedSsid. Chua luu duoc lich su (thu lai sau)."
+        }
+        _state.update {
+            it.copy(
+                isWifiEnabled = true,
+                wifiConnectionState = WifiConnectionState.Connected(ssid = resolvedSsid),
+                statusMessage = successMessage,
+            )
+        }
+        return true
+    }
+
+    private fun publishWifiFailure(result: WifiConnectResult.Failed) {
+        val uiMessage = when (result.reason) {
+            WifiConnectFailureReason.WIFI_DISABLED ->
+                "Wi-Fi dang tat. Hay bat Wi-Fi roi thu lai."
+            WifiConnectFailureReason.PERMISSION_DENIED ->
+                "Thieu quyen Wi-Fi/Location. Hay cap quyen roi thu lai."
+            WifiConnectFailureReason.SSID_NOT_FOUND ->
+                "Khong tim thay SSID xung quanh. Hay dung gan router hon hoac test tren may that."
+            WifiConnectFailureReason.NOT_ACTUALLY_CONNECTED ->
+                "May chua vao duoc Wi-Fi that du app da gui yeu cau ket noi."
+            WifiConnectFailureReason.AUTHENTICATION_OR_UNAVAILABLE ->
+                "Khong ket noi duoc. Co the sai mat khau hoac mang khong kha dung."
+            WifiConnectFailureReason.TIMEOUT ->
+                "Ket noi qua lau (timeout). Thu lai hoac dung gan router hon."
+            WifiConnectFailureReason.INVALID_INPUT ->
+                "Du lieu ket noi khong hop le."
+            WifiConnectFailureReason.UNKNOWN ->
+                result.message ?: "Khong ket noi duoc Wi-Fi."
+        }
+        _state.update {
+            it.copy(
+                wifiConnectionState = WifiConnectionState.Failed(
+                    reason = result.reason,
+                    message = uiMessage,
+                ),
+                statusMessage = uiMessage,
+            )
         }
     }
 
@@ -398,19 +616,58 @@ class MainViewModel @JvmOverloads constructor(
             setOcrLoading("Dang xu ly anh tu thu vien...")
             runCatching {
                 val bitmap = decodeBitmapFromUri(uri)
-                ocrProcessor.recognizeText(bitmap)
-            }.onSuccess { text ->
+                recognizeReadableText(bitmap)
+            }.onSuccess { scanResult ->
                 handleOcrRecognitionSuccess(
                     source = "Thu vien anh",
-                    text = text,
+                    text = scanResult.text,
                     blankMessage = "OCR khong doc duoc noi dung. Thu anh ro hon hoac doi goc chup.",
+                    localCredentials = scanResult.credentials,
                 )
             }.onFailure { throwable ->
                 _state.update {
                     it.copy(
                         isLoading = false,
                         scanSource = "Thu vien anh",
-                        statusMessage = "OCR that bai: ${throwable.message ?: "Loi khong xac dinh"}",
+                        statusMessage = buildOcrFailureMessage(throwable),
+                    )
+                }
+            }
+        }
+    }
+
+    fun startQrFromGallery(uri: Uri) {
+        viewModelScope.launch {
+            setOcrLoading("Dang doc ma QR tu thu vien...")
+            runCatching {
+                val bitmap = decodeBitmapFromUri(uri)
+                val image = InputImage.fromBitmap(bitmap, 0)
+                val scanner = BarcodeScanning.getClient(
+                    BarcodeScannerOptions.Builder()
+                        .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                        .build(),
+                )
+                try {
+                    scanner.process(image).await()
+                        .firstOrNull { it.rawValue.orEmpty().isNotBlank() }
+                        ?.rawValue
+                        .orEmpty()
+                } finally {
+                    scanner.close()
+                }
+            }.onSuccess { rawQrText ->
+                handleOcrRecognitionSuccess(
+                    source = "Thu vien QR",
+                    text = rawQrText,
+                    blankMessage = "Anh thu vien khong co ma QR Wi-Fi hop le. Vui long chon anh khac.",
+                    preferLocalCredentials = true,
+                )
+            }.onFailure { throwable ->
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        scanSource = "Thu vien QR",
+                        statusMessage = "Doc QR that bai: ${throwable.message ?: "Loi khong xac dinh"}",
                     )
                 }
             }
@@ -421,19 +678,20 @@ class MainViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             setOcrLoading("Dang quet OCR tu camera...")
             runCatching {
-                ocrProcessor.recognizeText(bitmap)
-            }.onSuccess { text ->
+                recognizeReadableText(bitmap)
+            }.onSuccess { scanResult ->
                 handleOcrRecognitionSuccess(
                     source = "May quet",
-                    text = text,
+                    text = scanResult.text,
                     blankMessage = "OCR khong doc duoc noi dung. Thu chup lai ro hon.",
+                    localCredentials = scanResult.credentials,
                 )
             }.onFailure { throwable ->
                 _state.update {
                     it.copy(
                         isLoading = false,
                         scanSource = "May quet",
-                        statusMessage = "OCR that bai: ${throwable.message ?: "Loi khong xac dinh"}",
+                        statusMessage = buildOcrFailureMessage(throwable),
                     )
                 }
             }
@@ -445,8 +703,12 @@ class MainViewModel @JvmOverloads constructor(
         text: String,
         blankMessage: String,
         preferLocalCredentials: Boolean = false,
+        localCredentials: WifiOcrCredentials? = null,
     ) {
-        if (text.isBlank()) {
+        val hasLocalCredentials = localCredentials != null &&
+            (localCredentials.ssid.isNotBlank() || localCredentials.password.isNotBlank())
+
+        if (text.isBlank() && !hasLocalCredentials) {
             _state.update {
                 it.copy(
                     isLoading = false,
@@ -473,8 +735,8 @@ class MainViewModel @JvmOverloads constructor(
             it.copy(
                 scanSource = source,
                 ocrText = text,
-                statusMessage = "OCR thanh cong. Dang dung AI de lay ten Wi-Fi va mat khau...",
-                aiValidation = AiValidationState.Loading,
+                statusMessage = "OCR thanh cong. Dang tach text trong khung quet...",
+                aiValidation = AiValidationState.Hidden,
             )
         }
 
@@ -483,11 +745,10 @@ class MainViewModel @JvmOverloads constructor(
             baseUrl = currentBaseUrl,
             text = text,
             preferLocalCredentials = preferLocalCredentials,
+            localCredentials = localCredentials,
         )
 
-        val saveMessage = if (resolved.parsed.ssid.orEmpty().isNotBlank() ||
-            resolved.parsed.password.orEmpty().isNotBlank()
-        ) {
+        val saveMessage = if (resolved.parsed.ssid.orEmpty().isNotBlank()) {
             runCatching {
                 repository.saveParsedWifi(
                     baseUrl = currentBaseUrl,
@@ -513,6 +774,39 @@ class MainViewModel @JvmOverloads constructor(
             "Chua co du lieu de luu."
         }
 
+        val resolvedSsid = resolved.parsed.ssid.orEmpty()
+        val nearbyNetworks = if (resolvedSsid.isNotBlank()) getAvailableNearbyNetworks() else emptyList()
+        val nearbyMatch = if (resolvedSsid.isNotBlank()) {
+            resolveBestConnectionTarget(resolvedSsid, nearbyNetworks)
+        } else {
+            null
+        }
+        val fuzzyResolution = if (resolvedSsid.isNotBlank() && nearbyNetworks.isNotEmpty()) {
+            resolveFuzzySuggestion(
+                baseUrl = currentBaseUrl,
+                ocrSsid = resolvedSsid,
+                nearbyNetworks = nearbyNetworks,
+            )
+        } else {
+            FuzzyResolution(
+                state = SsidSuggestionState.Hidden,
+                nearbyNetworks = nearbyNetworks,
+                bestMatch = null,
+                score = null,
+            )
+        }
+        val nearbyStatus = when {
+            resolvedSsid.isBlank() -> ""
+            nearbyNetworks.isEmpty() -> buildNearbyWifiStatus(emptyList())
+            nearbyMatch == null -> "Khong co Wi-Fi '$resolvedSsid' o gan day trong danh sach mang thuc te."
+            nearbyMatch.ssid.equals(resolvedSsid, ignoreCase = true) ->
+                "Da tim thay Wi-Fi '$resolvedSsid' trong khu vuc gan day."
+            else ->
+                "Tim thay mang gan dung nhat '${
+                    nearbyMatch.ssid
+                }' tu ket qua OCR '$resolvedSsid'."
+        }
+
         _state.update {
             it.copy(
                 isLoading = false,
@@ -521,11 +815,13 @@ class MainViewModel @JvmOverloads constructor(
                 security = resolved.parsed.security.orEmpty(),
                 sourceFormat = resolved.parsed.sourceFormat.orEmpty(),
                 confidence = resolved.parsed.confidence,
-                statusMessage = "${resolved.message} $saveMessage",
+                statusMessage = listOf(resolved.message, saveMessage, nearbyStatus)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" "),
                 aiValidation = AiValidationState.Hidden,
-                ssidSuggestion = SsidSuggestionState.Hidden,
-                nearbyNetworks = emptyList(),
-                nearbyWifiStatus = "",
+                ssidSuggestion = fuzzyResolution.state,
+                nearbyNetworks = fuzzyResolution.nearbyNetworks.ifEmpty { nearbyNetworks },
+                nearbyWifiStatus = nearbyStatus,
                 wifiConnectionState = WifiConnectionState.Idle,
                 isNearbyExpanded = false,
             )
@@ -536,72 +832,35 @@ class MainViewModel @JvmOverloads constructor(
         baseUrl: String,
         text: String,
         preferLocalCredentials: Boolean = false,
+        localCredentials: WifiOcrCredentials? = null,
     ): OcrCredentialResolution {
-        val local = ocrProcessor.extractWifiCredentials(text)
-        if (preferLocalCredentials && (local.ssid.isNotBlank() || local.password.isNotBlank())) {
+        val local = localCredentials
+            ?.takeIf { it.ssid.isNotBlank() || it.password.isNotBlank() }
+            ?: ocrProcessor.extractWifiCredentials(text)
+        val localParsed = local.toParsedWifiData(fallbackSource = "ocr_local_hint")
+
+        if (preferLocalCredentials && localParsed.hasAnyOcrValue()) {
             return OcrCredentialResolution(
-                parsed = ParsedWifiData(
-                    ssid = local.ssid,
-                    password = local.password,
-                    security = "",
-                    sourceFormat = "qr_local",
-                    confidence = null,
+                parsed = localParsed.copy(
+                    sourceFormat = localParsed.sourceFormat.orEmpty().ifBlank { "qr_local" },
                 ),
                 aiData = null,
                 message = "Da doc thong tin tu ma QR. Hay kiem tra roi bam Ket noi.",
             )
         }
 
-        val aiResolution = resolveAiValidation(
-            baseUrl = baseUrl,
-            ssid = null,
-            password = null,
-            ocrText = text,
-        )
-        val aiReady = aiResolution.uiState as? AiValidationState.Ready
-        val aiSsid = aiReady?.normalizedSsid.orEmpty().trim()
-        val aiPassword = aiReady?.normalizedPassword.orEmpty().trim()
-        if (aiSsid.isNotBlank() || aiPassword.isNotBlank()) {
+        if (localParsed.hasAnyOcrValue()) {
             return OcrCredentialResolution(
-                parsed = ParsedWifiData(
-                    ssid = aiSsid,
-                    password = aiPassword,
-                    security = "",
-                    sourceFormat = "ai_ocr",
-                    confidence = aiReady?.confidence,
-                ),
-                aiData = aiResolution.persisted,
-                message = "AI da dien thong tin. Hay kiem tra SSID/mat khau roi bam Ket noi.",
-            )
-        }
-
-        val parsedByServer = runCatching {
-            repository.parseOcr(baseUrl, text)
-        }.getOrNull()
-        if (parsedByServer?.ok == true && parsedByServer.data != null) {
-            val parsed = parsedByServer.data
-            if (parsed.ssid.orEmpty().isNotBlank() || parsed.password.orEmpty().isNotBlank()) {
-                return OcrCredentialResolution(
-                    parsed = parsed.copy(
-                        sourceFormat = parsed.sourceFormat.orEmpty().ifBlank { "ocr_server" },
-                    ),
-                    aiData = aiResolution.persisted,
-                    message = "Da dien thong tin tu ket qua OCR. Hay kiem tra roi bam Ket noi.",
-                )
-            }
-        }
-
-        if (local.ssid.isNotBlank() || local.password.isNotBlank()) {
-            return OcrCredentialResolution(
-                parsed = ParsedWifiData(
-                    ssid = local.ssid,
-                    password = local.password,
-                    security = "",
-                    sourceFormat = "ocr_local_hint",
-                    confidence = null,
-                ),
-                aiData = aiResolution.persisted,
-                message = "AI chua tra du lieu ro rang, app da dien goi y tu noi dung OCR.",
+                parsed = localParsed,
+                aiData = null,
+                message = when {
+                    localParsed.sourceFormat.orEmpty().contains("layout") ->
+                        "App da doc text OCR trong khung quet va dien vao 2 o. Hay kiem tra roi bam Ket noi."
+                    localParsed.sourceFormat.orEmpty().contains("labeled") ->
+                        "App da doc text OCR va tach theo nhan Name/ID/Password."
+                    else ->
+                        "App da doc text OCR va dien thong tin Wi-Fi tim thay."
+                },
             )
         }
 
@@ -613,9 +872,220 @@ class MainViewModel @JvmOverloads constructor(
                 sourceFormat = "",
                 confidence = null,
             ),
-            aiData = aiResolution.persisted,
-            message = "Chua doc duoc ten Wi-Fi va mat khau. Ban co the nhap lai thu cong.",
+            aiData = null,
+            message = "OCR da doc duoc text, nhung chua tach ra ro ten Wi-Fi va mat khau. Vui long nhap thu cong.",
         )
+    }
+
+    private fun WifiOcrCredentials.toParsedWifiData(fallbackSource: String): ParsedWifiData {
+        return ParsedWifiData(
+            ssid = ssid,
+            password = password,
+            security = security,
+            sourceFormat = sourceFormat.ifBlank { fallbackSource },
+            confidence = confidence,
+        ).normalizedOcrCandidate()
+    }
+
+    private fun ParsedWifiData.normalizedOcrCandidate(): ParsedWifiData {
+        return copy(
+            ssid = sanitizeOcrSsid(ssid),
+            password = sanitizeOcrPassword(password),
+            security = security.orEmpty().trim(),
+            sourceFormat = sourceFormat.orEmpty().trim(),
+            confidence = confidence?.coerceIn(0.0, 1.0),
+        )
+    }
+
+    private fun ParsedWifiData.hasAnyOcrValue(): Boolean {
+        return ssid.orEmpty().isNotBlank() || password.orEmpty().isNotBlank()
+    }
+
+    private fun ParsedWifiData.hasReliableOcrSsid(ocrText: String): Boolean {
+        val ssidValue = ssid.orEmpty().trim()
+        val passwordValue = password.orEmpty().trim()
+        val source = sourceFormat.orEmpty().lowercase(Locale.ROOT)
+        val candidateScore = scoreOcrCandidate(this, ocrText)
+
+        if (ssidValue.isBlank()) return false
+        if (ssidValue.length > 32) return false
+        if (ssidValue.equals("wifi", ignoreCase = true)) return false
+        if (looksLikeUrlValue(ssidValue)) return false
+        if (looksLikeNoiseValue(ssidValue)) return false
+
+        return when {
+            "wifi_qr" in source || "qr_local" in source -> true
+            "labeled" in source -> candidateScore >= 1.15
+            "two_line" in source -> passwordValue.isNotBlank() && candidateScore >= 1.35
+            "ai" in source || "server" in source -> {
+                val confidenceValue = confidence ?: 0.0
+                confidenceValue >= 0.76 &&
+                    candidateScore >= 1.35 &&
+                    containsOcrEvidence(ssidValue, ocrText)
+            }
+            "heuristic" in source -> passwordValue.isNotBlank() && candidateScore >= 1.45
+            else -> passwordValue.isNotBlank() && candidateScore >= 1.45
+        }
+    }
+
+    private fun ParsedWifiData.isStrongLocalOcrCandidate(ocrText: String): Boolean {
+        val source = sourceFormat.orEmpty().lowercase(Locale.ROOT)
+        val isLocalSource = "layout_ocr" in source ||
+            "labeled" in source ||
+            "two_line" in source ||
+            "heuristic" in source ||
+            "wifi_qr" in source
+        return isLocalSource &&
+            ssid.orEmpty().isNotBlank() &&
+            password.orEmpty().isNotBlank() &&
+            hasReliableOcrSsid(ocrText) &&
+            scoreOcrCandidate(this, ocrText) >= 1.35
+    }
+
+    private fun scoreOcrCandidate(candidate: ParsedWifiData, ocrText: String): Double {
+        val ssidValue = candidate.ssid.orEmpty().trim()
+        val passwordValue = candidate.password.orEmpty().trim()
+        val source = candidate.sourceFormat.orEmpty().lowercase(Locale.ROOT)
+        val normalizedText = ocrText.lowercase(Locale.ROOT)
+
+        var score = candidate.confidence ?: when {
+            "wifi_qr" in source -> 0.98
+            "labeled" in source -> 0.86
+            "two_line" in source -> 0.8
+            "server" in source -> 0.78
+            "ai" in source -> 0.76
+            "heuristic" in source -> 0.68
+            else -> 0.55
+        }
+
+        if (ssidValue.isNotBlank()) score += 0.35 else score -= 0.4
+        if (passwordValue.isNotBlank()) score += 0.42
+
+        if (ssidValue.length in 1..32) score += 0.08 else if (ssidValue.length > 32) score -= 0.35
+        if (passwordValue.length in 8..63) score += 0.14 else if (passwordValue.length > 63) score -= 0.35
+        if (passwordValue.contains(' ')) score -= 0.08
+        if (passwordValue.equals(ssidValue, ignoreCase = true)) score -= 0.25
+        if (looksLikeNoiseValue(ssidValue)) score -= 0.3
+        if (looksLikeUrlValue(passwordValue)) score -= 0.45
+        if (isLikelyPasswordValue(ssidValue)) score -= 0.2
+
+        if (ssidValue.isNotBlank() && normalizedText.contains(ssidValue.lowercase(Locale.ROOT))) score += 0.05
+        if (passwordValue.isNotBlank() && normalizedText.contains(passwordValue.lowercase(Locale.ROOT))) score += 0.05
+
+        if ("wifi_qr" in source) score += 0.2
+        if ("labeled" in source) score += 0.08
+        if ("server" in source) score += 0.05
+        if ("heuristic" in source) score -= 0.03
+
+        return score
+    }
+
+    private fun sanitizeOcrSsid(value: String?): String {
+        val sanitized = value.orEmpty()
+            .replace(
+                Regex(
+                    """^(ssid|wifi(?:\s*name)?|wifi\s*id|id|network\s*name|ten\s*wifi|ten\s*mang)\s*[:=-]\s*""",
+                    RegexOption.IGNORE_CASE,
+                ),
+                "",
+            )
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+            .trim('"', '\'', '`')
+            .trim()
+        if (sanitized.length > 32) return ""
+        if (sanitized.equals("wifi", ignoreCase = true)) return ""
+        if (looksLikeUrlValue(sanitized)) return ""
+        if (looksLikeNoiseValue(sanitized)) return ""
+        return sanitized
+    }
+
+    private fun sanitizeOcrPassword(value: String?): String {
+        return value.orEmpty()
+            .replace(
+                Regex(
+                    """^(password|pass|pass\s*word|pwd|mat\s*khau|mk)\s*[:=-]\s*""",
+                    RegexOption.IGNORE_CASE,
+                ),
+                "",
+            )
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+            .trim('"', '\'', '`')
+            .trim()
+    }
+
+    private fun looksLikeUrlValue(value: String): Boolean {
+        return value.isNotBlank() && Regex("""(https?://|www\.|\.com\b|\.net\b|\.org\b)""", RegexOption.IGNORE_CASE)
+            .containsMatchIn(value)
+    }
+
+    private fun looksLikeNoiseValue(value: String): Boolean {
+        return value.isNotBlank() && Regex(
+            """(\bfree\s*wifi\b|\bmien\s*phi\b|\bhotline\b|\bemail\b|\busername\b|\bdang\s*nhap\b|\blogin\b|\bwelcome\b|\bxin\s*chao\b|\bcam\s*on\b|\bscan\b|\bqr\b|\bmenu\b|\binternet\b|\bconnected\b|\brouter\b|\bsecurity\b)""",
+            RegexOption.IGNORE_CASE,
+        ).containsMatchIn(value)
+    }
+
+    private fun containsOcrEvidence(value: String, ocrText: String): Boolean {
+        val normalizedValue = value.lowercase(Locale.ROOT)
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        val normalizedText = ocrText.lowercase(Locale.ROOT)
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        val compactValue = normalizedValue.replace(Regex("[^a-z0-9]"), "")
+        val compactText = normalizedText.replace(Regex("[^a-z0-9]"), "")
+        return normalizedValue.isNotBlank() &&
+            (normalizedText.contains(normalizedValue) ||
+                compactValue.length >= 3 && compactText.contains(compactValue))
+    }
+
+    private suspend fun recognizeReadableText(bitmap: Bitmap): WifiOcrScanResult {
+        val quality = ocrProcessor.assessImageQuality(bitmap)
+        if (!quality.isReadable) {
+            throw OcrImageQualityException(quality.message)
+        }
+        return ocrProcessor.recognizeWifiText(bitmap)
+    }
+
+    private fun buildOcrFailureMessage(throwable: Throwable): String {
+        return if (throwable is OcrImageQualityException) {
+            throwable.message ?: "Khong quet duoc: anh khong du ro. Vui long nhap thu cong."
+        } else {
+            "OCR that bai: ${throwable.message ?: "Loi khong xac dinh"}"
+        }
+    }
+
+    private fun logOcrResolution(
+        rawText: String,
+        local: ParsedWifiData?,
+        server: ParsedWifiData?,
+        ai: ParsedWifiData?,
+        chosen: ParsedWifiData?,
+    ) {
+        if (!BuildConfig.DEBUG) return
+        Log.d(
+            OCR_LOG_TAG,
+            buildString {
+                appendLine("raw=${rawText.take(500).replace("\n", " | ")}")
+                appendLine("local=${local?.toOcrLogLine()}")
+                appendLine("server=${server?.toOcrLogLine()}")
+                appendLine("ai=${ai?.toOcrLogLine()}")
+                append("chosen=${chosen?.toOcrLogLine()}")
+            },
+        )
+    }
+
+    private fun ParsedWifiData.toOcrLogLine(): String {
+        return "ssid='${ssid.orEmpty()}', password='${password.orEmpty()}', source='${sourceFormat.orEmpty()}', confidence=${confidence}"
+    }
+
+    private fun isLikelyPasswordValue(value: String): Boolean {
+        if (value.isBlank()) return false
+        if (looksLikeUrlValue(value)) return false
+        if (value.length !in 8..63) return false
+        return value.any(Char::isLetter) || value.any(Char::isDigit)
     }
 
     fun onImageSelectionCanceled() {
@@ -810,6 +1280,7 @@ class MainViewModel @JvmOverloads constructor(
                 nearbyWifiStatus = "",
                 wifiConnectionState = WifiConnectionState.Idle,
                 isNearbyExpanded = false,
+                sharedLinkRequestId = it.sharedLinkRequestId + 1L,
             )
         }
     }
@@ -826,16 +1297,23 @@ class MainViewModel @JvmOverloads constructor(
 
     fun refreshNearbyWifiNetworks(recalculateFuzzy: Boolean = false) {
         viewModelScope.launch {
+            val wifiEnabled = isWifiEnabledInSystem()
             val scannedNetworks = getScannedNearbyNetworks()
             val previousNetworks = _state.value.nearbyNetworks
-            val networks = if (scannedNetworks.isNotEmpty()) scannedNetworks else previousNetworks
+            val networks = when {
+                !wifiEnabled -> emptyList()
+                scannedNetworks.isNotEmpty() -> scannedNetworks
+                else -> previousNetworks
+            }
             val nearbyStatus = when {
+                !wifiEnabled -> "Wi-Fi dang tat. Hay bat Wi-Fi de quet va ket noi."
                 scannedNetworks.isNotEmpty() -> buildNearbyWifiStatus(scannedNetworks)
                 previousNetworks.isNotEmpty() -> "Khong cap nhat duoc danh sach moi, dang hien du lieu scan gan nhat."
                 else -> buildNearbyWifiStatus(emptyList())
             }
             _state.update {
                 it.copy(
+                    isWifiEnabled = wifiEnabled,
                     nearbyNetworks = networks,
                     nearbyWifiStatus = nearbyStatus,
                 )
@@ -849,10 +1327,11 @@ class MainViewModel @JvmOverloads constructor(
                     nearbyNetworks = networks,
                 )
                 _state.update {
-                    it.copy(
+                    val updated = it.copy(
                         ssidSuggestion = fuzzy.state,
                         nearbyNetworks = fuzzy.nearbyNetworks.ifEmpty { networks },
                     )
+                    maybeAutoApplyFuzzyNetwork(updated, fuzzy)
                 }
             }
         }
@@ -1272,6 +1751,7 @@ class MainViewModel @JvmOverloads constructor(
         if (!hasNearbyWifiPermission()) return emptyList()
 
         val wifiManager = app.getSystemService(WifiManager::class.java) ?: return emptyList()
+        if (!wifiManager.isWifiEnabled) return emptyList()
         return runCatching {
             wifiManager.startScan()
             wifiManager.scanResults
@@ -1284,6 +1764,8 @@ class MainViewModel @JvmOverloads constructor(
                         NearbyNetwork(
                             ssid = ssid,
                             signalLevel = result.level.toWifiSignalLevel(),
+                            rssiDbm = result.level.takeIf { it in -127..0 },
+                            frequencyMhz = result.frequency.takeIf { it > 0 },
                         )
                     }
                 }
@@ -1325,6 +1807,9 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     private fun buildNearbyWifiStatus(scannedNetworks: List<NearbyNetwork>): String {
+        if (!isWifiEnabledInSystem()) {
+            return "Wi-Fi dang tat. Hay bat Wi-Fi de app tiep tuc quet va ket noi."
+        }
         if (isRunningOnEmulator()) {
             return "Dang chay emulator: scan/ket noi Wi-Fi that se bi gioi han. Hay test tren may Android that."
         }
@@ -1351,6 +1836,119 @@ class MainViewModel @JvmOverloads constructor(
             (brand.startsWith("generic", ignoreCase = true) &&
                 device.startsWith("generic", ignoreCase = true)) ||
             product.contains("sdk", ignoreCase = true)
+    }
+
+    private fun isWifiEnabledInSystem(): Boolean {
+        val app = getApplication<Application>().applicationContext
+        val wifiManager = app.getSystemService(WifiManager::class.java) ?: return false
+        return wifiManager.isWifiEnabled
+    }
+
+    fun refreshWifiEnvironment(recalculateFuzzy: Boolean = false) {
+        refreshNearbyWifiNetworks(recalculateFuzzy)
+    }
+
+    private fun maybeAutoApplyFuzzyNetwork(
+        state: MainUiState,
+        fuzzy: FuzzyResolution,
+    ): MainUiState {
+        val found = fuzzy.state as? SsidSuggestionState.Found ?: return state
+        val currentSsid = state.ssid.trim()
+        if (currentSsid.isBlank()) return state
+        if (found.bestMatch.equals(currentSsid, ignoreCase = true)) return state
+        if (found.score < 0.68) return state
+        return state.copy(
+            ssid = found.bestMatch,
+            statusMessage = "Da doi sang mang Wi-Fi gan dung nhat '${found.bestMatch}' tu ket qua OCR.",
+        )
+    }
+
+    private fun resolveBestConnectionTarget(
+        ocrSsid: String,
+        nearbyNetworks: List<NearbyNetwork>,
+    ): ResolvedNetworkMatch? {
+        if (ocrSsid.isBlank()) return null
+        if (nearbyNetworks.isEmpty()) {
+            return ResolvedNetworkMatch(
+                ssid = ocrSsid,
+                signalLevel = 0,
+                score = 1.0,
+            )
+        }
+
+        nearbyNetworks.firstOrNull { it.ssid.equals(ocrSsid, ignoreCase = true) }?.let { exact ->
+            return ResolvedNetworkMatch(
+                ssid = exact.ssid,
+                signalLevel = exact.signalLevel,
+                score = 1.0,
+            )
+        }
+
+        return findBestNetworkMatch(ocrSsid, nearbyNetworks)
+    }
+
+    private fun findBestNetworkMatch(
+        ocrSsid: String,
+        networks: List<NearbyNetwork>,
+    ): ResolvedNetworkMatch? {
+        if (ocrSsid.isBlank() || networks.isEmpty()) return null
+
+        val normalizedOcr = normalizeSsidForMatch(ocrSsid)
+        var best: ResolvedNetworkMatch? = null
+
+        for (network in networks) {
+            val normalizedNearby = normalizeSsidForMatch(network.ssid)
+            val compactOcr = normalizedOcr.replace(" ", "")
+            val compactNearby = normalizedNearby.replace(" ", "")
+            val charScore = similarityScore(compactOcr, compactNearby)
+            val tokenScore = tokenOverlapScore(normalizedOcr, normalizedNearby)
+            val containsBonus = when {
+                compactNearby.contains(compactOcr) || compactOcr.contains(compactNearby) -> 0.12
+                else -> 0.0
+            }
+            val signalBonus = ((network.signalLevel.coerceIn(1, 4) - 1) / 3.0) * 0.12
+            val score = (charScore * 0.58) + (tokenScore * 0.30) + containsBonus + signalBonus
+
+            if (best == null || score > best.score || (score == best.score && network.signalLevel > best.signalLevel)) {
+                best = ResolvedNetworkMatch(
+                    ssid = network.ssid,
+                    signalLevel = network.signalLevel,
+                    score = score.coerceAtMost(1.0),
+                )
+            }
+        }
+
+        return best?.takeIf { it.score >= 0.58 }
+    }
+
+    private fun normalizeSsidForMatch(value: String): String {
+        return value
+            .lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun tokenOverlapScore(a: String, b: String): Double {
+        val tokensA = a.split(' ').filter { it.isNotBlank() }.toSet()
+        val tokensB = b.split(' ').filter { it.isNotBlank() }.toSet()
+        if (tokensA.isEmpty() || tokensB.isEmpty()) return 0.0
+        val common = tokensA.intersect(tokensB).size.toDouble()
+        return common / maxOf(tokensA.size, tokensB.size).toDouble()
+    }
+
+    private suspend fun waitForActualWifiConnection(
+        targetSsid: String,
+        timeoutMs: Long = 12_000L,
+    ): Boolean {
+        val start = currentTimeMillis()
+        while (currentTimeMillis() - start < timeoutMs) {
+            if (getCurrentConnectedSsid()?.equals(targetSsid, ignoreCase = true) == true) {
+                return true
+            }
+            delay(500L)
+        }
+        return false
     }
 
     // ── End Fuzzy SSID Match ────────────────────────────────
@@ -1385,11 +1983,19 @@ private data class FuzzyResolution(
     val score: Double?,
 )
 
+private data class ResolvedNetworkMatch(
+    val ssid: String,
+    val signalLevel: Int,
+    val score: Double,
+)
+
 private data class OcrCredentialResolution(
     val parsed: ParsedWifiData,
     val aiData: AiValidateData?,
     val message: String,
 )
+
+private class OcrImageQualityException(message: String) : Exception(message)
 
 enum class NetworkDetailOrigin {
     HOME,
@@ -1430,6 +2036,7 @@ data class NetworkLiveTelemetry(
 data class MainUiState(
     val baseUrl: String = BuildConfig.API_BASE_URL,
     val isDarkModeEnabled: Boolean = false,
+    val isWifiEnabled: Boolean = true,
     val ocrText: String = "",
     val ssid: String = "",
     val password: String = "",
@@ -1445,6 +2052,7 @@ data class MainUiState(
     val nearbyWifiStatus: String = "",
     val wifiConnectionState: WifiConnectionState = WifiConnectionState.Idle,
     val isNearbyExpanded: Boolean = false,
+    val sharedLinkRequestId: Long = 0L,
     val historyRecords: List<SavedWifiRecord> = emptyList(),
     val selectedNetworkDetail: NetworkDetailUiModel? = null,
     val selectedNetworkTelemetry: NetworkLiveTelemetry? = null,
@@ -1484,14 +2092,19 @@ sealed class SsidSuggestionState {
     object NotFound : SsidSuggestionState()
 }
 
-data class NearbyNetwork(val ssid: String, val signalLevel: Int)
+data class NearbyNetwork(
+    val ssid: String,
+    val signalLevel: Int,
+    val rssiDbm: Int? = null,
+    val frequencyMhz: Int? = null,
+)
 
 private fun SavedWifiRecord.toNetworkDetailUiModel(
     origin: NetworkDetailOrigin,
     isConnected: Boolean,
-    scannedSignalLevel: Int?,
+    scannedNearby: NearbyNetwork?,
 ): NetworkDetailUiModel {
-    val dbm = scannedSignalLevel?.toApproximateDbm()
+    val dbm = scannedNearby?.rssiDbm
     return NetworkDetailUiModel(
         savedRecordId = id,
         ssid = ssid.ifBlank { "Wi-Fi đã lưu" },
@@ -1502,12 +2115,12 @@ private fun SavedWifiRecord.toNetworkDetailUiModel(
             sourceFormat = sourceFormat,
             fallbackOpen = password.isBlank(),
         ),
-        frequencyLabel = inferFrequencyLabel(ssid = ssid, frequencyMhz = null),
+        frequencyLabel = inferFrequencyLabel(frequencyMhz = scannedNearby?.frequencyMhz),
         signalDbm = dbm,
         signalQualityLabel = inferSignalQualityLabel(dbm),
-        usageTotalLabel = buildUsageTotalLabel(ssid, connected = isConnected),
-        usageHighlightLabel = buildUsageHighlightLabel(ssid),
-        usageBars = buildUsageBars(ssid),
+        usageTotalLabel = if (isConnected) "Dang do..." else "Chua do duoc",
+        usageHighlightLabel = "",
+        usageBars = emptyList(),
         sourceTitle = "Nguồn kết nối",
         sourceSubtitle = sourceFormat.toSourceSubtitle(),
         sourceBadgeLabel = if (password.isBlank()) "Mạng công cộng" else "Thiết bị tin cậy",
@@ -1526,9 +2139,9 @@ private fun SavedWifiRecord.toNetworkDetailUiModel(
 
 private fun RecentNetworkUiModel.toNetworkDetailUiModel(
     origin: NetworkDetailOrigin,
-    scannedSignalLevel: Int?,
+    scannedNearby: NearbyNetwork?,
 ): NetworkDetailUiModel {
-    val dbm = scannedSignalLevel?.toApproximateDbm()
+    val dbm = scannedNearby?.rssiDbm
     return NetworkDetailUiModel(
         ssid = name,
         lastConnectedLabel = lastConnectedLabel,
@@ -1538,12 +2151,12 @@ private fun RecentNetworkUiModel.toNetworkDetailUiModel(
             sourceFormat = type.name.lowercase(Locale.ROOT),
             fallbackOpen = type == RecentNetworkType.BUILDING,
         ),
-        frequencyLabel = inferFrequencyLabel(ssid = name, frequencyMhz = null),
+        frequencyLabel = inferFrequencyLabel(frequencyMhz = scannedNearby?.frequencyMhz),
         signalDbm = dbm,
         signalQualityLabel = inferSignalQualityLabel(dbm),
-        usageTotalLabel = buildUsageTotalLabel(name, connected = isConnected),
-        usageHighlightLabel = buildUsageHighlightLabel(name),
-        usageBars = buildUsageBars(name),
+        usageTotalLabel = if (isConnected) "Dang do..." else "Chua do duoc",
+        usageHighlightLabel = "",
+        usageBars = emptyList(),
         sourceTitle = "Nguồn kết nối",
         sourceSubtitle = when (type) {
             RecentNetworkType.WIFI -> "Thiết bị của bạn đã từng dùng mạng này gần đây."
@@ -1578,53 +2191,22 @@ private fun inferSecurityLabel(
     }
 }
 
-private fun inferFrequencyLabel(
-    ssid: String,
-    frequencyMhz: Int?,
-): String {
+private fun inferFrequencyLabel(frequencyMhz: Int?): String {
     return when {
         frequencyMhz != null && frequencyMhz >= 5000 -> String.format(Locale.US, "%.1f GHz", frequencyMhz / 1000f)
         frequencyMhz != null -> String.format(Locale.US, "%.1f GHz", frequencyMhz / 1000f)
-        ssid.lowercase(Locale.ROOT).contains("5g") -> "5.8 GHz"
-        else -> "2.4 GHz"
+        else -> "Chua do duoc"
     }
 }
 
 private fun inferSignalQualityLabel(dbm: Int?): String {
     return when {
-        dbm == null -> "Ổn định"
+        dbm == null -> "Chua do duoc"
         dbm >= -50 -> "Tuyệt vời"
         dbm >= -60 -> "Rất tốt"
         dbm >= -70 -> "Tốt"
         dbm >= -80 -> "Khá yếu"
         else -> "Yếu"
-    }
-}
-
-private fun Int.toApproximateDbm(): Int {
-    return when (this) {
-        4 -> -42
-        3 -> -57
-        2 -> -68
-        else -> -82
-    }
-}
-
-private fun buildUsageTotalLabel(seed: String, connected: Boolean): String {
-    val base = (seed.hashCode().toUInt().toLong() % 90L) / 10.0 + if (connected) 10.0 else 4.0
-    return "Tổng cộng: ${String.format(Locale.US, "%.1f", base)} GB"
-}
-
-private fun buildUsageHighlightLabel(seed: String): String {
-    val peak = (seed.hashCode().toUInt().toLong() % 35L) / 10.0 + 1.8
-    return "${String.format(Locale.US, "%.1f", peak)}G"
-}
-
-private fun buildUsageBars(seed: String): List<Float> {
-    val hash = seed.hashCode().toUInt().toLong()
-    return List(6) { index ->
-        val raw = ((hash shr (index * 4)) and 0xFL).toFloat()
-        0.28f + (raw / 15f) * 0.72f
     }
 }
 

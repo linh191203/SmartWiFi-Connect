@@ -406,10 +406,7 @@ private fun SignalStrengthCard(
                     fontWeight = FontWeight.ExtraBold,
                 )
                 Text(
-                    text = buildString {
-                        append(qualityLabel)
-                        signalDbm?.let { append(" ($it dBm)") }
-                    },
+                    text = signalDbm?.let { "$qualityLabel ($it dBm)" } ?: qualityLabel,
                     color = DetailTextPrimary,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.ExtraBold,
@@ -446,16 +443,16 @@ private fun SpeedAndUsageCard(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        text = if (detail.isConnected) "Tốc độ & dữ liệu" else "Dữ liệu đã dùng",
+                        text = if (detail.isConnected && liveTelemetry != null) "Tốc độ thực tế" else "Chưa có số liệu thực tế",
                         color = DetailTextPrimary,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                     )
                     Text(
                         text = if (detail.isConnected && liveTelemetry != null) {
-                            "Link speed hiện tại của máy trên mạng này."
+                            "Link speed, tốc độ nhận và phát đang lấy trực tiếp từ máy."
                         } else {
-                            "Ước lượng hành vi sử dụng của mạng đã lưu."
+                            "Hãy kết nối vào đúng mạng này để đo Mbps và cập nhật thông số thật."
                         },
                         color = DetailTextMuted,
                         style = MaterialTheme.typography.bodyMedium,
@@ -468,7 +465,11 @@ private fun SpeedAndUsageCard(
                     color = DetailSurfaceSoft,
                 ) {
                     Text(
-                        text = detail.usageTotalLabel,
+                        text = if (detail.isConnected && liveTelemetry != null) {
+                            liveTelemetry.linkSpeedMbps?.let { "$it Mbps" } ?: "Dang do"
+                        } else {
+                            "Can ket noi"
+                        },
                         color = DetailBrand,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.ExtraBold,
@@ -500,12 +501,21 @@ private fun SpeedAndUsageCard(
                         value = liveTelemetry.txLinkSpeedMbps?.let { "$it Mbps" } ?: "--",
                     )
                 }
+            } else {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    color = DetailSurfaceSoft,
+                ) {
+                    Text(
+                        text = "Chua co du lieu toc do hoac luu luong thuc te cho mang nay.",
+                        color = DetailTextMuted,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp),
+                    )
+                }
             }
-
-            UsageChart(
-                bars = detail.usageBars,
-                highlightLabel = detail.usageHighlightLabel,
-            )
         }
     }
 }
@@ -771,7 +781,7 @@ private fun SecondaryDangerButton(
 @Composable
 private fun SignalBars(signalDbm: Int?) {
     val activeBars = when {
-        signalDbm == null -> 3
+        signalDbm == null -> 0
         signalDbm >= -50 -> 5
         signalDbm >= -60 -> 4
         signalDbm >= -70 -> 3
