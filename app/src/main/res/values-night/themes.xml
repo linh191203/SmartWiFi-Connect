@@ -21,5 +21,9 @@
         <item name="android:windowDisablePreview">true</item>
     </style>
 
-    <style name="Theme.SmartWiFiConnect.Splash" parent="Theme.SmartWiFiConnect.SplashContent" />
+    <style name="Theme.SmartWiFiConnect.Splash" parent="Theme.SmartWiFiConnect.SplashContent">
+        <item name="android:windowSplashScreenBackground">@color/splashPrimaryEnd</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_invisible</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
 </resources>

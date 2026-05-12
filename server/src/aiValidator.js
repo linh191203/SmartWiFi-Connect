@@ -19,7 +19,7 @@ function hasSsidLabel(value) {
 
 function stripPasswordLabel(value) {
   return normalizeWhitespace(value).replace(
-    /^(password|pass\s*word|pass\s*wifi|wifi\s*pass|wi-?fi\s*pass|pass|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*/i,
+    /^(password|pass\s*word|pass|mat\s*khau|m[aạ]t\s*kh[aẩ]u|mk)\s*[:=-]\s*/i,
     "",
   );
 }
@@ -38,26 +38,26 @@ function hasAmbiguousOcrChars(value) {
 
 function buildSuggestion({ flags, shouldAutoConnect, normalizedSsid, normalizedPassword }) {
   if (!normalizedSsid && !normalizedPassword) {
-    return "Không đủ dữ liệu Wi-Fi. Nên OCR lại hoặc nhập tay.";
+    return "Khong du du lieu WiFi. Nen OCR lai hoac nhap tay.";
   }
 
   if (flags.includes("missing_password")) {
-    return "Đã tìm thấy SSID nhưng chưa có mật khẩu. Nên kiểm tra lại OCR trước khi kết nối.";
+    return "Da tim thay SSID nhung chua co mat khau. Nen kiem tra lai OCR truoc khi ket noi.";
   }
 
   if (flags.includes("missing_ssid")) {
-    return "Đã tìm thấy mật khẩu nhưng chưa có SSID. Nên kiểm tra lại tên mạng Wi-Fi.";
+    return "Da tim thay mat khau nhung chua co SSID. Nen kiem tra lai ten mang WiFi.";
   }
 
   if (flags.includes("ssid_mismatch_with_ocr") || flags.includes("password_mismatch_with_ocr")) {
-    return "Dữ liệu đã nhập không khớp hoàn toàn với OCR. Nên kiểm tra lại trước khi kết nối.";
+    return "Du lieu da nhap khong khop hoan toan voi OCR. Nen kiem tra lai truoc khi ket noi.";
   }
 
   if (shouldAutoConnect) {
-    return "Dữ liệu Wi-Fi có độ tin cậy tốt, có thể ưu tiên tự động kết nối.";
+    return "Du lieu WiFi co do tin cay tot, co the uu tien tu dong ket noi.";
   }
 
-  return "Đã có dữ liệu Wi-Fi, nhưng nên xác nhận lại trước khi kết nối.";
+  return "Da co du lieu WiFi, nhung nen xac nhan lai truoc khi ket noi.";
 }
 
 function validateWifiCandidate(input) {

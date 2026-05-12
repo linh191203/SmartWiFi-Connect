@@ -16,7 +16,3 @@ local.properties
 
 /server/node_modules
 /server/.env
-/server/data/
-
-hs_err_pid*.log
-replay_pid*.log

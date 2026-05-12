@@ -1,48 +1,31 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.ksp)
 }
 
-fun String.asBuildConfigString(): String = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
-
-val debugApiBaseUrl = providers.gradleProperty("SMARTWIFI_DEBUG_API_BASE_URL")
-    .orElse(providers.environmentVariable("SMARTWIFI_DEBUG_API_BASE_URL"))
-    .orElse("")
-
-val releaseApiBaseUrl = providers.gradleProperty("SMARTWIFI_API_BASE_URL")
-    .orElse(providers.environmentVariable("SMARTWIFI_API_BASE_URL"))
-    .orElse("https://api.smartwifi.example.com/")
-
-val apiAuthToken = providers.gradleProperty("SMARTWIFI_API_AUTH_TOKEN")
-    .orElse(providers.environmentVariable("SMARTWIFI_API_AUTH_TOKEN"))
-    .orElse("")
-
 android {
-    namespace = "com.smartwificonnect"
+    namespace = "com.example.smartwificonnect"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.smartwificonnect"
+        applicationId = "com.example.smartwificonnect"
         minSdk = 29
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "API_AUTH_TOKEN", apiAuthToken.get().asBuildConfigString())
+        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8080/\"")
     }
 
     buildTypes {
         debug {
             isMinifyEnabled = false
-            buildConfigField("String", "API_BASE_URL", debugApiBaseUrl.get().asBuildConfigString())
         }
 
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            buildConfigField("String", "API_BASE_URL", releaseApiBaseUrl.get().asBuildConfigString())
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -52,23 +35,13 @@ android {
 
     buildFeatures {
         buildConfig = true
+        viewBinding = true
         compose = true
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    lint {
-        disable.addAll(
-            listOf(
-                "AndroidGradlePluginVersion",
-                "GradleDependency",
-                "NewerVersionAvailable",
-                "ObsoleteSdkInt",
-            ),
-        )
     }
 }
 
@@ -80,6 +53,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
@@ -93,8 +68,6 @@ dependencies {
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp)
@@ -102,17 +75,10 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.okhttp.logging.interceptor)
-    implementation(libs.play.app.update)
-    implementation(libs.play.app.update.ktx)
     implementation(libs.zxing.core)
-    ksp(libs.androidx.room.compiler)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.junit)
-    testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.mockk)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.okhttp.mockwebserver)
 }
