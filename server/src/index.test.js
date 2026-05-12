@@ -250,3 +250,35 @@ describe("404 handler", () => {
     expect(response.body.ok).toBe(false);
   });
 });
+
+describe("runtime config", () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    jest.resetModules();
+  });
+
+  test("throws when production starts without API_SECRET_TOKEN", () => {
+    process.env = {
+      ...originalEnv,
+      NODE_ENV: "production",
+    };
+    delete process.env.API_SECRET_TOKEN;
+
+    expect(() => {
+      jest.isolateModules(() => {
+        require("./index");
+      });
+    }).toThrow("API_SECRET_TOKEN must be set when NODE_ENV=production");
+  });
+
+  test("parses TRUST_PROXY values safely", () => {
+    const { parseTrustProxy } = require("./index");
+
+    expect(parseTrustProxy(undefined)).toBe(false);
+    expect(parseTrustProxy("true")).toBe(true);
+    expect(parseTrustProxy("2")).toBe(2);
+    expect(parseTrustProxy("loopback, linklocal")).toEqual(["loopback", "linklocal"]);
+  });
+});

@@ -24,17 +24,5 @@
 -dontwarn okhttp3.**
 -dontwarn retrofit2.**
 
-# Keep field names for Gson JSON deserialization.
-# Only the API response/request DTOs actually go through Gson reflection;
-# internal data classes and local DB models do NOT need to be preserved.
--keepclassmembers class com.example.smartwificonnect.data.ParsedWifiData { <fields>; }
--keepclassmembers class com.example.smartwificonnect.data.AiValidateData { <fields>; }
--keepclassmembers class com.example.smartwificonnect.data.FuzzyMatchData { <fields>; }
--keepclassmembers class com.example.smartwificonnect.data.FuzzyNetworkPayload { <fields>; }
--keepclassmembers class com.example.smartwificonnect.data.SaveNetworkRequest { <fields>; }
--keepclassmembers class com.example.smartwificonnect.data.HealthData { <fields>; }
--keepclassmembers class com.example.smartwificonnect.data.FuzzyMatchItem { <fields>; }
-
-# Keep generic envelope wrappers (they are parameterized — keep all members)
--keep class com.example.smartwificonnect.data.ApiEnvelope { *; }
--keep class com.example.smartwificonnect.data.ApiEnvelope$* { *; }
+# Keep model field names for Gson reflection
+-keep class com.example.smartwificonnect.data.** { *; }

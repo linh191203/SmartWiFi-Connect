@@ -1,51 +1,74 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
 }
 
+fun String.asBuildConfigString(): String = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val debugApiBaseUrl = providers.gradleProperty("SMARTWIFI_DEBUG_API_BASE_URL")
+    .orElse(providers.environmentVariable("SMARTWIFI_DEBUG_API_BASE_URL"))
+    .orElse("")
+
+val releaseApiBaseUrl = providers.gradleProperty("SMARTWIFI_API_BASE_URL")
+    .orElse(providers.environmentVariable("SMARTWIFI_API_BASE_URL"))
+    .orElse("https://api.smartwifi.example.com/")
+
+val apiAuthToken = providers.gradleProperty("SMARTWIFI_API_AUTH_TOKEN")
+    .orElse(providers.environmentVariable("SMARTWIFI_API_AUTH_TOKEN"))
+    .orElse("")
+
 android {
-    namespace = "com.example.smartwificonnect"
+    namespace = "com.smartwificonnect"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.smartwificonnect"
+        applicationId = "com.smartwificonnect"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        // Base URL is set per build type below; no default here to force explicit choice.
+        buildConfigField("String", "API_AUTH_TOKEN", apiAuthToken.get().asBuildConfigString())
     }
 
     buildTypes {
         debug {
             isMinifyEnabled = false
-            // Android emulator reaches host machine at 10.0.2.2
-            buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8080/\"")
+            buildConfigField("String", "API_BASE_URL", debugApiBaseUrl.get().asBuildConfigString())
         }
 
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            buildConfigField("String", "API_BASE_URL", releaseApiBaseUrl.get().asBuildConfigString())
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // TODO: replace with your real production HTTPS URL before shipping
-            buildConfigField("String", "API_BASE_URL", "\"https://api.smartwifi.example.com/\"")
         }
     }
 
     buildFeatures {
         buildConfig = true
-        viewBinding = true
         compose = true
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    lint {
+        disable.addAll(
+            listOf(
+                "AndroidGradlePluginVersion",
+                "GradleDependency",
+                "NewerVersionAvailable",
+                "ObsoleteSdkInt",
+            ),
+        )
     }
 }
 
@@ -57,8 +80,6 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
@@ -74,7 +95,6 @@ dependencies {
     implementation(libs.androidx.camera.view)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
-    annotationProcessor(libs.androidx.room.compiler)
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp)
@@ -82,10 +102,17 @@ dependencies {
     implementation(libs.mlkit.barcode.scanning)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.okhttp.logging.interceptor)
+    implementation(libs.play.app.update)
+    implementation(libs.play.app.update.ktx)
     implementation(libs.zxing.core)
+    ksp(libs.androidx.room.compiler)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.mockk)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.okhttp.mockwebserver)
 }

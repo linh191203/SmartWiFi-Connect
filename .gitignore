@@ -16,8 +16,7 @@ local.properties
 
 /server/node_modules
 /server/.env
-/server/data/networks.json
+/server/data/
 
-# JVM crash logs
 hs_err_pid*.log
 replay_pid*.log

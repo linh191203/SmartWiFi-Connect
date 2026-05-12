@@ -44,9 +44,9 @@
 - [x] Test mock API integration cho FE (MockWebServer + instrumentation)
 
 ### BE
-- [x] Hoàn thiện `/api/ai/validate` dummy
-- [x] Trả JSON mẫu
-- [x] Viết unit test backend (30 tests passed ✅)
+- [ ] Hoàn thiện `/api/ai/validate` dummy
+- [ ] Trả JSON mẫu
+- [ ] Viết unit test backend
 
 ---
 
@@ -56,7 +56,7 @@
 - [x] Gọi API `/api/ai/validate`
 - [ ] Tạo ReviewScreen
 - [x] Lưu local history bằng SQLite
-- [x] Lưu local bằng Room
+- [ ] Lưu local bằng Room
 - [x] Kiểm thử tích hợp với MockWebServer
 
 ### BE
@@ -76,10 +76,10 @@
 - [ ] Test manual flow kết nối và lưu
 
 ### BE
-- [x] Tạo `POST /api/networks`
-- [x] Lưu DB (file-backed JSON store)
-- [x] Mã hóa password trước khi lưu (SHA-256 hash)
-- [x] Unit test API save network (22 tests passed ✅)
+- [ ] Tạo `POST /api/networks`
+- [ ] Lưu DB
+- [ ] Mã hóa password trước khi lưu
+- [ ] Unit test API save network
 
 ---
 

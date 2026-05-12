@@ -213,7 +213,7 @@ describe("validateWifiCandidate", () => {
     test("should provide suggestion for missing password", () => {
       const result = validateWifiCandidate({ ssid: "MyWiFi" });
       if (result.flags.includes("missing_password")) {
-        expect(result.suggestion).toContain("mat khau");
+        expect(result.suggestion).toContain("mật khẩu");
       }
     });
 
