@@ -1,0 +1,4 @@
+# Copy production-only values to ~/.gradle/gradle.properties or inject them in CI.
+# Do not commit real production endpoints or bearer tokens into the repo.
+PRODUCTION_API_BASE_URL=https://api.your-domain.tld/
+PRODUCTION_API_AUTH_TOKEN=replace-with-a-long-random-token

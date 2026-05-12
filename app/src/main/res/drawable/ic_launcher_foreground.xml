@@ -4,6 +4,6 @@
         android:top="10dp"
         android:right="10dp"
         android:bottom="10dp"
-        android:drawable="@drawable/ic_launcher_foreground_art"
+        android:drawable="@drawable/app_logo_foreground_art"
         android:gravity="center" />
 </layer-list>
