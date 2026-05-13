@@ -10,6 +10,7 @@
 - product.md: mô tả sản phẩm, mục tiêu, phạm vi
 - architecture.md: cấu trúc code và data flow
 - ui-flow.md: luồng màn hình và navigation
+- huong-dan-su-dung.md: huong dan su dung chi tiet cho nguoi dung cuoi
 - memory.md: tiến độ hiện tại, bug, next step
 - tasks.md: task cụ thể đang làm
 - coding-rules.md: quy tắc code
