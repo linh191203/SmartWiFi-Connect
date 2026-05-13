@@ -71,15 +71,10 @@ internal object WifiOcrResultSelector {
                 if (value.isBlank()) {
                     null
                 } else {
-                    val hasExplicitLabel = explicitLabelOf(candidate)
                     FieldEvidence(
                         value = value,
                         score = scoreOf(candidate),
-                        hasExplicitLabel = hasExplicitLabel,
-                        fieldSpecificBonus = candidate.fieldSpecificBonus(
-                            fieldValue = value,
-                            hasExplicitLabel = hasExplicitLabel,
-                        ),
+                        hasExplicitLabel = explicitLabelOf(candidate),
                     )
                 }
             }
@@ -92,19 +87,16 @@ internal object WifiOcrResultSelector {
                 val maxScore = evidence.maxOf { it.score }
                 val totalRawScore = evidence.sumOf { it.score }
                 val explicitLabelHits = evidence.count { it.hasExplicitLabel }
-                val fieldSpecificBonus = evidence.sumOf { it.fieldSpecificBonus }
                 FieldValueScore(
                     value = value,
                     aggregateScore = maxScore +
                         (evidence.size * 24) +
                         (explicitLabelHits * 16) +
-                        fieldSpecificBonus +
                         value.relationBonus(relationTarget, explicitLabelHits),
                     maxScore = maxScore,
                     totalRawScore = totalRawScore,
                     occurrenceCount = evidence.size,
                     explicitLabelHits = explicitLabelHits,
-                    fieldSpecificBonus = fieldSpecificBonus,
                     isBestOverallValue = value == bestOverallValue,
                 )
             }
@@ -113,7 +105,6 @@ internal object WifiOcrResultSelector {
                     .thenBy { it.maxScore }
                     .thenBy { it.totalRawScore }
                     .thenBy { it.explicitLabelHits }
-                    .thenBy { it.fieldSpecificBonus }
                     .thenBy { it.occurrenceCount }
                     .thenBy { if (it.isBestOverallValue) 1 else 0 },
             )
@@ -127,7 +118,6 @@ internal object WifiOcrResultSelector {
         val keywordHits = wifiKeywordHints.count { normalized.contains(it) }
         val hasExplicitSsidLabel = ssidLabelHints.any { normalized.contains(it) }
         val hasExplicitPasswordLabel = passwordLabelHints.any { normalized.contains(it) }
-        val nonBlankLineCount = text.lineSequence().count { it.isNotBlank() }
         val ssidScore = scoreSsid(credentials.ssid, normalized)
         val passwordScore = scorePassword(credentials.password, normalized)
 
@@ -148,7 +138,6 @@ internal object WifiOcrResultSelector {
             keywordHits = keywordHits,
             hasExplicitSsidLabel = hasExplicitSsidLabel,
             hasExplicitPasswordLabel = hasExplicitPasswordLabel,
-            nonBlankLineCount = nonBlankLineCount,
         )
     }
 
@@ -183,42 +172,6 @@ internal object WifiOcrResultSelector {
 
         if (mergedCredentials.ssid.isNotBlank() && mergedCredentials.password.isNotBlank()) {
             confidence += if (sameCandidateHasBoth) 0.16 else -0.05
-        }
-
-        val ssidCompact = mergedCredentials.ssid.compactComparableToken()
-        val passwordCompact = mergedCredentials.password.compactComparableToken()
-        if (ssidCompact.length >= 6 && passwordCompact.length >= 6) {
-            val similarity = similarityScore(ssidCompact, passwordCompact)
-            when {
-                ssidCompact == passwordCompact -> {
-                    confidence -= if (passwordSource?.hasExplicitPasswordLabel == true &&
-                        !mergedCredentials.password.any(Char::isWhitespace)
-                    ) {
-                        0.06
-                    } else {
-                        0.34
-                    }
-                }
-                similarity >= 0.88 -> confidence -= 0.16
-            }
-        }
-
-        if (
-            mergedCredentials.ssid.isNotBlank() &&
-            mergedCredentials.password.isNotBlank() &&
-            ssidSource?.hasExplicitSsidLabel != true &&
-            passwordSource?.hasExplicitPasswordLabel != true
-        ) {
-            confidence = confidence.coerceAtMost(0.82)
-        }
-
-        if (mergedCredentials.ssid.isBlank() && mergedCredentials.password.isNotBlank()) {
-            if (passwordSource?.nonBlankLineCount == 1) {
-                confidence += 0.42
-            }
-            if (mergedCredentials.password.isStablePasswordToken()) {
-                confidence += 0.14
-            }
         }
 
         return confidence.coerceIn(0.0, 0.99)
@@ -267,36 +220,14 @@ internal object WifiOcrResultSelector {
 
         val compactValue = compactComparableToken()
         if (compactValue.length < 6 || relationTarget.length < 6) return 0
-        return 0
-    }
+        if (compactValue == relationTarget) return 120
 
-    private fun EvaluatedCandidate.fieldSpecificBonus(
-        fieldValue: String,
-        hasExplicitLabel: Boolean,
-    ): Int {
-        if (!hasExplicitLabel || fieldValue.isBlank()) return 0
-
-        val extractedFieldCount = listOf(credentials.ssid, credentials.password)
-            .count { it.isNotBlank() }
-        if (extractedFieldCount != 1) return 0
-
-        val nonBlankLineCount = text.lineSequence().count { it.isNotBlank() }
-        return when {
-            nonBlankLineCount <= 1 -> 8
-            nonBlankLineCount == 2 -> 4
-            else -> 0
-        }
+        val similarity = similarityScore(compactValue, relationTarget)
+        return if (similarity >= 0.9) (similarity * 90).toInt() else 0
     }
 
     private fun String.compactComparableToken(): String {
         return normalizeForOcrMatching().filter(Char::isLetterOrDigit)
-    }
-
-    private fun String.isStablePasswordToken(): Boolean {
-        val value = trim()
-        if (value.length !in 8..63) return false
-        if (value.count { it.isWhitespace() } > 1) return false
-        return value.any { it.isLetterOrDigit() }
     }
 
     private fun similarityScore(a: String, b: String): Double {
@@ -339,14 +270,12 @@ internal object WifiOcrResultSelector {
         val keywordHits: Int,
         val hasExplicitSsidLabel: Boolean,
         val hasExplicitPasswordLabel: Boolean,
-        val nonBlankLineCount: Int,
     )
 
     private data class FieldEvidence(
         val value: String,
         val score: Int,
         val hasExplicitLabel: Boolean,
-        val fieldSpecificBonus: Int,
     )
 
     private data class FieldValueScore(
@@ -356,7 +285,6 @@ internal object WifiOcrResultSelector {
         val totalRawScore: Int,
         val occurrenceCount: Int,
         val explicitLabelHits: Int,
-        val fieldSpecificBonus: Int,
         val isBestOverallValue: Boolean,
     )
 
