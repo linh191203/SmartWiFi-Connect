@@ -2,7 +2,6 @@ package com.smartwificonnect.feature.scanimage
 
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
-import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -15,14 +14,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -42,9 +44,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.smartwificonnect.feature.camera.CameraCaptureController
 import com.smartwificonnect.feature.camera.CameraPreview
 import com.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.smartwificonnect.ui.theme.SmartWifiAppTheme
@@ -98,7 +99,7 @@ fun ImageScanScreen(
     isOcrLoading: Boolean = false,
     ocrLoadingMessage: String = "",
 ) {
-    var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    val captureController = remember { CameraCaptureController() }
     val tabs = listOf(
         ImageScanBottomTab.HOME,
         ImageScanBottomTab.SCAN,
@@ -127,9 +128,7 @@ fun ImageScanScreen(
             .fillMaxSize()
             .background(ImageScanBackground),
     ) {
-        ImageScanTopBar(
-            onCloseClick = onCloseClick,
-        )
+        ImageScanTopBar(onCloseClick = onCloseClick)
 
         Box(
             modifier = Modifier
@@ -137,49 +136,65 @@ fun ImageScanScreen(
                 .fillMaxWidth()
                 .background(Color(0xFF565656)),
         ) {
-            CameraPreview(
-                modifier = Modifier.matchParentSize(),
-                onPreviewReady = { previewView = it },
-            )
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(Color(0x33000000)),
-            )
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Spacer(modifier = Modifier.height(92.dp))
+            BoxWithConstraints(modifier = Modifier.matchParentSize()) {
+                val compact = maxHeight < 620.dp
+                val veryCompact = maxHeight < 520.dp
+                val frameSize = when {
+                    veryCompact -> 210.dp
+                    compact -> 238.dp
+                    else -> 274.dp
+                }
+                val topSpace = when {
+                    veryCompact -> 18.dp
+                    compact -> 34.dp
+                    else -> 72.dp
+                }
 
-                ImageScanFrame(
-                    modifier = Modifier.size(274.dp),
+                CameraPreview(
+                    modifier = Modifier.matchParentSize(),
+                    captureController = captureController,
                 )
-
-                Spacer(modifier = Modifier.height(40.dp))
-
-                ImageScanHintPill()
-
-                Spacer(modifier = Modifier.height(62.dp))
-
-                ImageScanActionBar(
-                    enabled = !isOcrLoading,
-                    onOpenGalleryClick = onOpenGalleryClick,
-                    onCaptureClick = {
-                        if (isOcrLoading) return@ImageScanActionBar
-                        val bitmap = previewView?.bitmap
-                        if (bitmap == null) {
-                            onCaptureUnavailable()
-                        } else {
-                            onCaptureClick(bitmap)
-                        }
-                    },
-                    onSwitchToQrClick = onSwitchToQrClick,
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(Color(0x33000000)),
                 )
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp, vertical = if (compact) 12.dp else 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Spacer(modifier = Modifier.height(topSpace))
 
-                Spacer(modifier = Modifier.weight(1f))
+                    ImageScanFrame(
+                        modifier = Modifier.size(frameSize),
+                    )
+
+                    Spacer(modifier = Modifier.height(if (compact) 22.dp else 34.dp))
+
+                    ImageScanHintPill()
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    ImageScanActionBar(
+                        enabled = !isOcrLoading,
+                        onOpenGalleryClick = onOpenGalleryClick,
+                        onCaptureClick = {
+                            if (isOcrLoading) return@ImageScanActionBar
+                            captureController.takePhoto { bitmap ->
+                                if (bitmap == null) {
+                                    onCaptureUnavailable()
+                                } else {
+                                    onCaptureClick(bitmap)
+                                }
+                            }
+                        },
+                        onSwitchToQrClick = onSwitchToQrClick,
+                    )
+
+                    Spacer(modifier = Modifier.height(if (compact) 10.dp else 16.dp))
+                }
             }
 
             if (isOcrLoading) {
@@ -207,6 +222,7 @@ private fun ImageScanTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
@@ -495,7 +511,9 @@ private fun ImageScanBottomBar(
     onTabClick: (ImageScanBottomTab) -> Unit,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding(),
         shape = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp),
         color = ImageScanBar,
         border = BorderStroke(1.dp, ImageScanBarStroke),

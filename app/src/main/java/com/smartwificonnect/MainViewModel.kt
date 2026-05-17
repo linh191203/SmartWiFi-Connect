@@ -9,6 +9,7 @@ import android.location.LocationManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -26,6 +27,7 @@ import com.smartwificonnect.feature.share.SmartWifiSharePayloadCodec
 import com.smartwificonnect.ocr.WifiOcrCredentials
 import com.smartwificonnect.ocr.WifiOcrEngine
 import com.smartwificonnect.ocr.WifiOcrProcessor
+import com.smartwificonnect.ocr.WifiOcrTextParser
 import com.smartwificonnect.wifi.WifiConnectFailureReason
 import com.smartwificonnect.wifi.WifiConnectResult
 import com.smartwificonnect.wifi.WifiConnector
@@ -233,21 +235,40 @@ class MainViewModel @JvmOverloads constructor(
                 ssidSuggestion = SsidSuggestionState.Hidden,
                 nearbyNetworks = emptyList(),
                 wifiConnectionState = WifiConnectionState.Idle,
+                ocrAutoConnectState = OcrAutoConnectState.Idle,
                 isNearbyExpanded = false,
             )
         }
     }
 
     fun onSsidChanged(value: String) {
-        _state.update { it.copy(ssid = value, wifiConnectionState = WifiConnectionState.Idle) }
+        _state.update {
+            it.copy(
+                ssid = value,
+                wifiConnectionState = WifiConnectionState.Idle,
+                ocrAutoConnectState = OcrAutoConnectState.NeedUserReview,
+            )
+        }
     }
 
     fun onPasswordChanged(value: String) {
-        _state.update { it.copy(password = value, wifiConnectionState = WifiConnectionState.Idle) }
+        _state.update {
+            it.copy(
+                password = value,
+                wifiConnectionState = WifiConnectionState.Idle,
+                ocrAutoConnectState = OcrAutoConnectState.NeedUserReview,
+            )
+        }
     }
 
     fun onSecurityChanged(value: String) {
-        _state.update { it.copy(security = value, wifiConnectionState = WifiConnectionState.Idle) }
+        _state.update {
+            it.copy(
+                security = value,
+                wifiConnectionState = WifiConnectionState.Idle,
+                ocrAutoConnectState = OcrAutoConnectState.NeedUserReview,
+            )
+        }
     }
 
     fun clearWifiConnectionState() {
@@ -259,6 +280,12 @@ class MainViewModel @JvmOverloads constructor(
         val requestedSsid = current.ssid.trim()
         val password = current.password.trim().takeIf { it.isNotEmpty() }
         val security = current.security.trim().takeIf { it.isNotEmpty() }
+        logWifiFlow(
+            "connectToParsedWifi input ssid='${requestedSsid.debugWifiValue()}', " +
+                "password=${password.debugPasswordForLog()}, security='${security.orEmpty()}', " +
+                "source=${current.sourceFormat}, android=${Build.VERSION.SDK_INT}, " +
+                "permissions=${buildPermissionDebugSummary()}, current=${buildCurrentWifiDebugSnapshot()}",
+        )
 
         if (requestedSsid.isBlank()) {
             val message = if (password != null) {
@@ -326,6 +353,9 @@ class MainViewModel @JvmOverloads constructor(
 
         viewModelScope.launch {
             val scannedNearby = getNearbyNetworksOffMain()
+            logWifiFlow(
+                "nearby scan before connect count=${scannedNearby.size}: ${scannedNearby.toDebugScanList()}",
+            )
             val connectionPlan = resolveWifiConnectionPlan(
                 requestedSsid = requestedSsid,
                 nearbyNetworks = scannedNearby,
@@ -347,9 +377,16 @@ class MainViewModel @JvmOverloads constructor(
                 }
                 return@launch
             }
+            logWifiFlow(
+                "connection plan candidates=${connectionPlan.candidateSsids}, " +
+                    "requiresSelection=${connectionPlan.requiresUserSelection}, " +
+                    "suggested=${connectionPlan.suggestedSsid}, score=${connectionPlan.suggestedScore}, " +
+                    "reason='${connectionPlan.selectionReason}'",
+            )
 
             if (connectionPlan.requiresUserSelection) {
-                val uiMessage = "Tên Wi-Fi từ OCR chưa khớp chắc chắn với danh sách Wi-Fi thật. Hãy chọn đúng SSID trong danh sách xung quanh rồi kết nối."
+                val uiMessage = connectionPlan.reviewMessage
+                    ?: "Tên Wi-Fi từ OCR chưa khớp chắc chắn với danh sách Wi-Fi thật. Hãy chọn đúng SSID trong danh sách xung quanh rồi kết nối."
                 _state.update {
                     it.copy(
                         wifiConnectionState = WifiConnectionState.Failed(
@@ -365,6 +402,14 @@ class MainViewModel @JvmOverloads constructor(
                                 score = connectionPlan.suggestedScore ?: 0.0,
                             )
                         } ?: it.ssidSuggestion,
+                        ocrAutoConnectState = if (current.sourceFormat.isOcrDerivedSource()) {
+                            when {
+                                connectionPlan.noMatchingWifiFound -> OcrAutoConnectState.NoMatchingWifiFound(uiMessage)
+                                else -> OcrAutoConnectState.MultipleMatchesNeedSelection(uiMessage)
+                            }
+                        } else {
+                            it.ocrAutoConnectState
+                        },
                         isNearbyExpanded = true,
                     )
                 }
@@ -380,6 +425,11 @@ class MainViewModel @JvmOverloads constructor(
                             ssid = targetSsid,
                             phase = WifiConnectionPhase.CONNECTING_WIFI,
                         ),
+                        ocrAutoConnectState = if (current.sourceFormat.isOcrDerivedSource()) {
+                            OcrAutoConnectState.AutoConnecting(targetSsid)
+                        } else {
+                            it.ocrAutoConnectState
+                        },
                         statusMessage = buildWifiConnectionAttemptMessage(
                             targetSsid = targetSsid,
                             plan = connectionPlan,
@@ -407,7 +457,13 @@ class MainViewModel @JvmOverloads constructor(
                 }
 
                 val result = runCatching {
-                    withTimeout(30_000L) {
+                    withTimeout(wifiConnectionTimeoutMillis) {
+                        logWifiFlow(
+                            "calling WifiConnector api=WifiNetworkSpecifier target='$targetSsid', " +
+                                "attempt=${index + 1}/${connectionPlan.candidateSsids.size}, " +
+                                "security='${security.orEmpty()}', password=${password.debugPasswordForLog()}, " +
+                                "permissions=${buildPermissionDebugSummary()}",
+                        )
                         connectWifi(
                             ssid = targetSsid,
                             password = password,
@@ -427,6 +483,10 @@ class MainViewModel @JvmOverloads constructor(
                         )
                     }
                 }
+                logWifiFlow(
+                    "WifiConnector result for '$targetSsid': ${result.toDebugString()}, " +
+                        "currentAfter=${buildCurrentWifiDebugSnapshot()}",
+                )
 
                 when (result) {
                     is WifiConnectResult.Success -> {
@@ -457,6 +517,11 @@ class MainViewModel @JvmOverloads constructor(
                             it.copy(
                                 ssid = result.ssid,
                                 wifiConnectionState = WifiConnectionState.Connected(ssid = result.ssid),
+                                ocrAutoConnectState = if (current.sourceFormat.isOcrDerivedSource()) {
+                                    OcrAutoConnectState.AutoConnectSuccess(result.ssid)
+                                } else {
+                                    it.ocrAutoConnectState
+                                },
                                 statusMessage = "Kết nối Wi-Fi thành công: ${result.ssid}. Đang lưu lịch sử...",
                             )
                         }
@@ -472,6 +537,11 @@ class MainViewModel @JvmOverloads constructor(
                                 ssid = result.ssid,
                                 statusMessage = successMessage,
                                 transientUserMessage = "Kết nối Wi-Fi thành công.",
+                                ocrAutoConnectState = if (current.sourceFormat.isOcrDerivedSource()) {
+                                    OcrAutoConnectState.AutoConnectSuccess(result.ssid)
+                                } else {
+                                    it.ocrAutoConnectState
+                                },
                             )
                         }
                         return@launch
@@ -487,6 +557,11 @@ class MainViewModel @JvmOverloads constructor(
                                     message = uiMessage,
                                     isCaptivePortal = result.isCaptivePortal,
                                 ),
+                                ocrAutoConnectState = if (current.sourceFormat.isOcrDerivedSource()) {
+                                    OcrAutoConnectState.AutoConnectFailed(uiMessage)
+                                } else {
+                                    it.ocrAutoConnectState
+                                },
                                 statusMessage = uiMessage,
                                 transientUserMessage = uiMessage,
                             )
@@ -513,6 +588,11 @@ class MainViewModel @JvmOverloads constructor(
                                         message = uiMessage,
                                         isCaptivePortal = joinedResult.isCaptivePortal,
                                     ),
+                                    ocrAutoConnectState = if (current.sourceFormat.isOcrDerivedSource()) {
+                                        OcrAutoConnectState.AutoConnectFailed(uiMessage)
+                                    } else {
+                                        it.ocrAutoConnectState
+                                    },
                                     statusMessage = uiMessage,
                                     transientUserMessage = uiMessage,
                                 )
@@ -541,6 +621,11 @@ class MainViewModel @JvmOverloads constructor(
                         reason = failure.reason,
                         message = uiMessage,
                     ),
+                    ocrAutoConnectState = if (current.sourceFormat.isOcrDerivedSource()) {
+                        OcrAutoConnectState.AutoConnectFailed(uiMessage)
+                    } else {
+                        it.ocrAutoConnectState
+                    },
                     statusMessage = uiMessage,
                 )
             }
@@ -557,36 +642,108 @@ class MainViewModel @JvmOverloads constructor(
                 it.ssid.equals(requestedSsid, ignoreCase = true)
             }
             if (exactScannedNetwork != null) {
+                if (sourceFormat.isOcrDerivedSource()) {
+                    val passwordValidation = WifiOcrAutoConnectPolicy.validatePasswordForAutoConnect(
+                        password = _state.value.password,
+                        securityLabel = exactScannedNetwork.securityLabel ?: _state.value.security,
+                    )
+                    if (passwordValidation is AutoConnectPasswordValidation.Invalid) {
+                        return WifiConnectionPlan(
+                            candidateSsids = emptyList(),
+                            directConnectionMissingFromScan = false,
+                            requiresUserSelection = true,
+                            suggestedSsid = exactScannedNetwork.ssid,
+                            suggestedScore = 1.0,
+                            reviewMessage = passwordValidation.message,
+                            selectionReason = "Exact scanned SSID found but password rejected before connect.",
+                        )
+                    }
+                }
                 return WifiConnectionPlan(
                     candidateSsids = listOf(exactScannedNetwork.ssid),
                     directConnectionMissingFromScan = false,
+                    selectionReason = "Exact SSID match from Android Wi-Fi scan.",
                 )
             }
 
             if (sourceFormat.isOcrDerivedSource() && nearbyNetworks.isNotEmpty()) {
-                val fuzzyMatch = findBestMatch(requestedSsid, nearbyNetworks)
-                if (fuzzyMatch != null && fuzzyMatch.score >= autoApplyFuzzySsidThreshold) {
-                    return WifiConnectionPlan(
-                        candidateSsids = listOf(fuzzyMatch.bestMatch),
-                        directConnectionMissingFromScan = false,
-                        resolvedFromFuzzyMatch = true,
-                        suggestedSsid = fuzzyMatch.bestMatch,
-                        suggestedScore = fuzzyMatch.score,
-                    )
+                return when (val decision = WifiOcrAutoConnectPolicy.decideSsidMatch(requestedSsid, nearbyNetworks)) {
+                    is SsidMatchDecision.AutoConnect -> {
+                        val passwordValidation = WifiOcrAutoConnectPolicy.validatePasswordForAutoConnect(
+                            password = _state.value.password,
+                            securityLabel = decision.candidate.network.securityLabel ?: _state.value.security,
+                        )
+                        if (passwordValidation is AutoConnectPasswordValidation.Invalid) {
+                            WifiConnectionPlan(
+                                candidateSsids = emptyList(),
+                                directConnectionMissingFromScan = false,
+                                requiresUserSelection = true,
+                                suggestedSsid = decision.candidate.network.ssid,
+                                suggestedScore = decision.candidate.score,
+                                reviewMessage = passwordValidation.message,
+                                selectionReason = "High-confidence fuzzy SSID found but password rejected before connect.",
+                            )
+                        } else {
+                            WifiConnectionPlan(
+                                candidateSsids = listOf(decision.candidate.network.ssid),
+                                directConnectionMissingFromScan = false,
+                                resolvedFromFuzzyMatch = !decision.candidate.isExactNormalized,
+                                suggestedSsid = decision.candidate.network.ssid,
+                                suggestedScore = decision.candidate.score,
+                                selectionReason = "Single high-confidence fuzzy SSID match selected from scan.",
+                            )
+                        }
+                    }
+
+                    is SsidMatchDecision.SingleMatchNeedsReview -> {
+                        WifiConnectionPlan(
+                            candidateSsids = emptyList(),
+                            directConnectionMissingFromScan = false,
+                            requiresUserSelection = true,
+                            suggestedSsid = decision.candidate.network.ssid,
+                            suggestedScore = decision.candidate.score,
+                            reviewMessage = "Tên Wi-Fi gần giống kết quả OCR nhưng chưa đủ chắc chắn. Vui lòng kiểm tra lại trước khi kết nối.",
+                            selectionReason = "Single fuzzy SSID below auto-connect threshold; requires review.",
+                        )
+                    }
+
+                    is SsidMatchDecision.MultipleMatchesNeedSelection -> {
+                        val best = decision.candidates.firstOrNull()
+                        WifiConnectionPlan(
+                            candidateSsids = emptyList(),
+                            directConnectionMissingFromScan = false,
+                            requiresUserSelection = true,
+                            suggestedSsid = best?.network?.ssid,
+                            suggestedScore = best?.score,
+                            reviewMessage = "Có nhiều Wi-Fi gần giống tên OCR đọc được. Vui lòng chọn đúng mạng trước khi kết nối.",
+                            selectionReason = "Multiple fuzzy SSID matches; auto-connect disabled.",
+                        )
+                    }
+
+                    is SsidMatchDecision.NoMatchingWifiFound -> {
+                        WifiConnectionPlan(
+                            candidateSsids = emptyList(),
+                            directConnectionMissingFromScan = false,
+                            requiresUserSelection = true,
+                            suggestedSsid = decision.bestCandidate?.network?.ssid,
+                            suggestedScore = decision.bestCandidate?.score,
+                            noMatchingWifiFound = true,
+                            reviewMessage = "Không tìm thấy mạng Wi-Fi phù hợp trong khu vực. Vui lòng kiểm tra lại tên mạng.",
+                            selectionReason = "No scanned SSID reached review threshold.",
+                        )
+                    }
                 }
-                return WifiConnectionPlan(
-                    candidateSsids = emptyList(),
-                    directConnectionMissingFromScan = true,
-                    requiresUserSelection = true,
-                    suggestedSsid = fuzzyMatch?.bestMatch,
-                    suggestedScore = fuzzyMatch?.score,
-                )
             }
 
             val directConnectionMissingFromScan = nearbyNetworks.isNotEmpty()
             return WifiConnectionPlan(
                 candidateSsids = listOf(requestedSsid),
                 directConnectionMissingFromScan = directConnectionMissingFromScan,
+                selectionReason = if (directConnectionMissingFromScan) {
+                    "Manual/direct connection requested; SSID not found in current scan."
+                } else {
+                    "Manual/direct connection requested without scan candidates."
+                },
             )
         }
 
@@ -734,6 +891,7 @@ class MainViewModel @JvmOverloads constructor(
                 it.copy(
                     isLoading = false,
                     statusMessage = "Đã hủy quét OCR.",
+                    ocrAutoConnectState = OcrAutoConnectState.Idle,
                 )
             } else {
                 it
@@ -801,6 +959,9 @@ class MainViewModel @JvmOverloads constructor(
                 if (processedBitmap != null && processedBitmap !== bitmap && !processedBitmap.isRecycled) {
                     processedBitmap.recycle()
                 }
+                if (runCatching { !bitmap.isRecycled }.getOrDefault(false)) {
+                    runCatching { bitmap.recycle() }
+                }
             }
         }
     }
@@ -830,6 +991,7 @@ class MainViewModel @JvmOverloads constructor(
                     nearbyNetworks = emptyList(),
                     nearbyWifiStatus = "",
                     wifiConnectionState = WifiConnectionState.Idle,
+                    ocrAutoConnectState = OcrAutoConnectState.NeedUserReview,
                     isNearbyExpanded = false,
                 )
             }
@@ -840,7 +1002,8 @@ class MainViewModel @JvmOverloads constructor(
             it.copy(
                 scanSource = source,
                 ocrText = text,
-                statusMessage = "OCR thành công. Đang dùng AI để lấy tên Wi-Fi và mật khẩu...",
+                statusMessage = "Đang đọc thông tin Wi-Fi...",
+                ocrAutoConnectState = OcrAutoConnectState.OcrProcessing,
                 aiValidation = AiValidationState.Loading,
             )
         }
@@ -854,17 +1017,73 @@ class MainViewModel @JvmOverloads constructor(
             preferLocalCredentials = preferLocalCredentials,
         )
 
-        val parsedSsid = resolved.parsed.ssid.orEmpty()
-        val parsedPassword = resolved.parsed.password.orEmpty()
+        val parsedSsid = resolved.parsed.ssid.orEmpty().cleanOcrSsidForConnection()
+        val parsedPassword = resolved.parsed.password.orEmpty().cleanOcrPasswordForConnection()
+        logWifiFlow(
+            "OCR final result source=$source, ssid='${parsedSsid.debugWifiValue()}', " +
+                "password=${parsedPassword.debugPasswordForLog()}, security='${resolved.parsed.security.orEmpty()}', " +
+                "confidence=${resolved.parsed.confidence}, format='${resolved.parsed.sourceFormat.orEmpty()}'",
+        )
+        _state.update {
+            it.copy(
+                ssid = parsedSsid,
+                password = parsedPassword,
+                security = resolved.parsed.security.orEmpty(),
+                sourceFormat = resolved.parsed.sourceFormat.orEmpty(),
+                confidence = resolved.parsed.confidence,
+                statusMessage = "Đã đọc thông tin Wi-Fi. Đang chuẩn bị quét mạng xung quanh...",
+                ocrAutoConnectState = OcrAutoConnectState.OcrParsed,
+            )
+        }
+        _state.update {
+            it.copy(
+                statusMessage = "Đang tìm mạng Wi-Fi phù hợp...",
+                ocrAutoConnectState = OcrAutoConnectState.NearbyWifiScanning,
+            )
+        }
         val nearbyNetworks = if (parsedSsid.isNotBlank() || parsedPassword.isNotBlank()) {
             getScannedNearbyNetworksForOcr()
                 .ifEmpty { getCachedNearbyNetworks() }
         } else {
             emptyList()
         }
-        val exactNearbySsid = nearbyNetworks.firstOrNull {
-            it.ssid.equals(parsedSsid, ignoreCase = true)
-        }?.ssid
+        logWifiFlow(
+            "OCR nearby scan count=${nearbyNetworks.size}: ${nearbyNetworks.toDebugScanList()}",
+        )
+        _state.update {
+            it.copy(
+                statusMessage = "Đang tìm mạng Wi-Fi phù hợp...",
+                ocrAutoConnectState = OcrAutoConnectState.MatchingSsid,
+            )
+        }
+        val matchDecision = WifiOcrAutoConnectPolicy.decideSsidMatch(
+            ocrSsid = parsedSsid,
+            nearbyNetworks = nearbyNetworks,
+        )
+        logWifiFlow("OCR SSID match decision: ${matchDecision.toDebugString()}")
+        val autoCandidate = (matchDecision as? SsidMatchDecision.AutoConnect)?.candidate
+        val passwordValidation = autoCandidate?.let { candidate ->
+            WifiOcrAutoConnectPolicy.validatePasswordForAutoConnect(
+                password = parsedPassword,
+                securityLabel = candidate.network.securityLabel ?: resolved.parsed.security,
+            )
+        }
+        val passwordOnlyAutoNetwork = if (autoCandidate == null) {
+            findPasswordOnlyAutoConnectNetwork(
+                parsedSsid = parsedSsid,
+                parsedPassword = parsedPassword,
+                nearbyNetworks = nearbyNetworks,
+            )
+        } else {
+            null
+        }
+        val resolvedPasswordValidation = passwordValidation
+            ?: passwordOnlyAutoNetwork?.let { network ->
+                WifiOcrAutoConnectPolicy.validatePasswordForAutoConnect(
+                    password = parsedPassword,
+                    securityLabel = network.securityLabel ?: resolved.parsed.security,
+                )
+            }
         val fuzzyResolution = if (parsedSsid.isNotBlank() && nearbyNetworks.isNotEmpty()) {
             resolveFuzzySuggestion(
                 baseUrl = currentBaseUrl,
@@ -879,28 +1098,196 @@ class MainViewModel @JvmOverloads constructor(
                 score = null,
             )
         }
+        val reviewState = buildOcrAutoConnectReviewState(
+            parsedSsid = parsedSsid,
+            parsedPassword = parsedPassword,
+            sourceFormat = resolved.parsed.sourceFormat.orEmpty(),
+            confidence = resolved.parsed.confidence,
+            securityLabel = resolved.parsed.security.orEmpty(),
+            matchDecision = matchDecision,
+            passwordValidation = resolvedPasswordValidation,
+        )
+        val finalReviewState = if (reviewState is OcrAutoConnectState.NeedUserReview && passwordOnlyAutoNetwork != null) {
+            OcrAutoConnectState.AutoConnecting(passwordOnlyAutoNetwork.ssid)
+        } else {
+            reviewState
+        }
+        val finalSsid = when {
+            finalReviewState is OcrAutoConnectState.AutoConnecting && autoCandidate != null ->
+                autoCandidate.network.ssid
+            finalReviewState is OcrAutoConnectState.AutoConnecting && passwordOnlyAutoNetwork != null ->
+                passwordOnlyAutoNetwork.ssid
+            else ->
+                autoCandidate?.network?.ssid ?: parsedSsid
+        }
+        val finalSecurity = resolved.parsed.security.orEmpty()
+            .ifBlank { autoCandidate?.network?.securityLabel.orEmpty() }
+            .ifBlank { passwordOnlyAutoNetwork?.securityLabel.orEmpty() }
+        logWifiFlow(
+            "OCR selected ssid='$finalSsid', security='$finalSecurity', " +
+                "autoState=${finalReviewState::class.simpleName}, reason=${matchDecision.toDebugString()}, " +
+                "passwordOnlyCandidate='${passwordOnlyAutoNetwork?.ssid.orEmpty()}'",
+        )
+        val suggestionState = when {
+            matchDecision is SsidMatchDecision.SingleMatchNeedsReview ->
+                SsidSuggestionState.Found(matchDecision.candidate.network.ssid, matchDecision.candidate.score)
+            matchDecision is SsidMatchDecision.MultipleMatchesNeedSelection ->
+                matchDecision.candidates.firstOrNull()?.let {
+                    SsidSuggestionState.Found(it.network.ssid, it.score)
+                } ?: fuzzyResolution.state
+            autoCandidate != null && !autoCandidate.network.ssid.equals(parsedSsid, ignoreCase = true) ->
+                SsidSuggestionState.Found(autoCandidate.network.ssid, autoCandidate.score)
+            passwordOnlyAutoNetwork != null ->
+                SsidSuggestionState.Found(passwordOnlyAutoNetwork.ssid, 1.0)
+            else -> fuzzyResolution.state
+        }
+        val finalStatusMessage = when {
+            finalReviewState is OcrAutoConnectState.AutoConnecting ->
+                buildOcrAutoConnectStatusMessage(
+                    reviewState = finalReviewState,
+                    fallback = resolved.message,
+                )
+            parsedSsid.isBlank() -> resolved.message
+            resolvedPasswordValidation is AutoConnectPasswordValidation.Invalid -> resolvedPasswordValidation.message
+            else -> buildOcrAutoConnectStatusMessage(
+                reviewState = finalReviewState,
+                fallback = resolved.message,
+            )
+        }
 
         _state.update {
             it.copy(
                 isLoading = false,
-                ssid = exactNearbySsid ?: parsedSsid,
+                ssid = finalSsid,
                 password = parsedPassword,
-                security = resolved.parsed.security.orEmpty(),
+                security = finalSecurity,
                 sourceFormat = resolved.parsed.sourceFormat.orEmpty(),
                 confidence = resolved.parsed.confidence,
-                statusMessage = resolved.message,
+                statusMessage = finalStatusMessage,
                 aiValidation = resolved.aiState,
-                ssidSuggestion = fuzzyResolution.state,
+                ssidSuggestion = suggestionState,
                 nearbyNetworks = fuzzyResolution.nearbyNetworks.ifEmpty { nearbyNetworks },
                 nearbyWifiStatus = buildNearbyWifiStatus(fuzzyResolution.nearbyNetworks.ifEmpty { nearbyNetworks }),
                 wifiConnectionState = WifiConnectionState.Idle,
-                isNearbyExpanded = parsedSsid.isBlank() && parsedPassword.isNotBlank(),
+                ocrAutoConnectState = finalReviewState,
+                isNearbyExpanded = finalReviewState is OcrAutoConnectState.MultipleMatchesNeedSelection ||
+                    parsedSsid.isBlank() && parsedPassword.isNotBlank(),
             )
         }
     }
 
+    private fun findPasswordOnlyAutoConnectNetwork(
+        parsedSsid: String,
+        parsedPassword: String,
+        nearbyNetworks: List<NearbyNetwork>,
+    ): NearbyNetwork? {
+        if (parsedSsid.isNotBlank() || parsedPassword.isBlank()) return null
+        val securedNetworks = nearbyNetworks.filter { network ->
+            network.securityLabel.requiresPasswordForConnection() &&
+                WifiOcrAutoConnectPolicy.validatePasswordForAutoConnect(
+                    password = parsedPassword,
+                    securityLabel = network.securityLabel,
+                ) is AutoConnectPasswordValidation.Valid
+        }
+        val onlyNetwork = securedNetworks.singleOrNull() ?: return null
+        logWifiFlow(
+            "password-only OCR auto candidate selected ssid='${onlyNetwork.ssid}', " +
+                "reason='Only one secured nearby Wi-Fi and password format is valid.'",
+        )
+        return onlyNetwork
+    }
+
     private suspend fun getScannedNearbyNetworksForOcr(): List<NearbyNetwork> {
         return getNearbyNetworksOffMain(forceRefresh = true)
+    }
+
+    private fun buildOcrAutoConnectReviewState(
+        parsedSsid: String,
+        parsedPassword: String,
+        sourceFormat: String,
+        confidence: Double?,
+        securityLabel: String,
+        matchDecision: SsidMatchDecision,
+        passwordValidation: AutoConnectPasswordValidation?,
+    ): OcrAutoConnectState {
+        if (parsedSsid.isBlank()) {
+            return OcrAutoConnectState.NeedUserReview
+        }
+        if (sourceFormat == "qr_local") {
+            val validation = passwordValidation ?: WifiOcrAutoConnectPolicy.validatePasswordForAutoConnect(
+                password = parsedPassword,
+                securityLabel = securityLabel,
+            )
+            return if (validation is AutoConnectPasswordValidation.Invalid) {
+                OcrAutoConnectState.NeedUserReview
+            } else {
+                OcrAutoConnectState.AutoConnecting(parsedSsid)
+            }
+        }
+        if (!sourceFormat.isEligibleForOcrAutoConnect(confidence)) {
+            return OcrAutoConnectState.NeedUserReview
+        }
+        return when (matchDecision) {
+            is SsidMatchDecision.AutoConnect -> {
+                when (passwordValidation) {
+                    is AutoConnectPasswordValidation.Invalid ->
+                        OcrAutoConnectState.NeedUserReview
+                    AutoConnectPasswordValidation.Valid ->
+                        OcrAutoConnectState.AutoConnecting(matchDecision.candidate.network.ssid)
+                    null -> {
+                        val validation = WifiOcrAutoConnectPolicy.validatePasswordForAutoConnect(
+                            password = parsedPassword,
+                            securityLabel = matchDecision.candidate.network.securityLabel,
+                        )
+                        if (validation is AutoConnectPasswordValidation.Valid) {
+                            OcrAutoConnectState.AutoConnecting(matchDecision.candidate.network.ssid)
+                        } else {
+                            OcrAutoConnectState.NeedUserReview
+                        }
+                    }
+                }
+            }
+
+            is SsidMatchDecision.SingleMatchNeedsReview ->
+                OcrAutoConnectState.NeedUserReview
+
+            is SsidMatchDecision.MultipleMatchesNeedSelection ->
+                OcrAutoConnectState.MultipleMatchesNeedSelection(
+                    "Có nhiều Wi-Fi gần giống tên OCR đọc được. Vui lòng chọn đúng mạng trước khi kết nối.",
+                )
+
+            is SsidMatchDecision.NoMatchingWifiFound ->
+                OcrAutoConnectState.NoMatchingWifiFound(
+                    "Không tìm thấy mạng Wi-Fi phù hợp trong khu vực. Vui lòng kiểm tra lại tên mạng.",
+                )
+        }
+    }
+
+    private fun buildOcrAutoConnectStatusMessage(
+        reviewState: OcrAutoConnectState,
+        fallback: String,
+    ): String {
+        return when (reviewState) {
+            is OcrAutoConnectState.AutoConnecting ->
+                "Đang thử kết nối tự động..."
+            is OcrAutoConnectState.MultipleMatchesNeedSelection ->
+                reviewState.message
+            is OcrAutoConnectState.NoMatchingWifiFound ->
+                reviewState.message
+            is OcrAutoConnectState.AutoConnectFailed ->
+                reviewState.message
+            OcrAutoConnectState.NeedUserReview ->
+                "Không thể kết nối tự động. Vui lòng kiểm tra lại thông tin Wi-Fi."
+            else -> fallback
+        }
+    }
+
+    private fun String.isEligibleForOcrAutoConnect(confidence: Double?): Boolean {
+        return when (this) {
+            "ocr_local_confident" -> (confidence ?: 0.0) >= localOcrHighConfidenceThreshold
+            "ai_ocr", "ocr_server" -> (confidence ?: 0.0) >= localOcrHighConfidenceThreshold
+            else -> false
+        }
     }
 
     private suspend fun getNearbyNetworksOffMain(forceRefresh: Boolean = false): List<NearbyNetwork> {
@@ -913,6 +1300,12 @@ class MainViewModel @JvmOverloads constructor(
 
     private fun getCachedNearbyNetworks(): List<NearbyNetwork> {
         return cachedNearbyNetworks.ifEmpty { _state.value.nearbyNetworks }
+    }
+
+    private fun logWifiFlow(message: String) {
+        if (BuildConfig.DEBUG) {
+            runCatching { Log.d(WIFI_FLOW_LOG_TAG, message) }
+        }
     }
 
     private suspend fun resolveOcrCredentials(
@@ -928,17 +1321,18 @@ class MainViewModel @JvmOverloads constructor(
             ocrProcessor.extractWifiCredentials(text)
         }
         if (preferLocalCredentials && (local.ssid.isNotBlank() || local.password.isNotBlank())) {
+            val qrPayload = WifiOcrTextParser.parseWifiQrPayloadData(text)
             return OcrCredentialResolution(
                 parsed = ParsedWifiData(
                     ssid = local.ssid,
                     password = local.password,
-                    security = "",
+                    security = qrPayload?.security.orEmpty(),
                     sourceFormat = "qr_local",
                     confidence = null,
                 ),
                 aiData = null,
                 aiState = AiValidationState.Hidden,
-                message = "Đã đọc thông tin từ mã QR. Hãy kiểm tra rồi bấm Kết nối.",
+                message = "Đã đọc thông tin từ mã QR. Ứng dụng sẽ thử kết nối Wi-Fi ngay.",
             )
         }
 
@@ -1109,6 +1503,28 @@ class MainViewModel @JvmOverloads constructor(
         return values.firstOrNull { !it.isNullOrBlank() }?.trim()
     }
 
+    private fun String.cleanOcrSsidForConnection(): String {
+        return removeInvisibleOcrChars()
+            .replace('\r', ' ')
+            .replace('\n', ' ')
+            .replace('\t', ' ')
+            .replace("\\s+".toRegex(), " ")
+            .trim()
+            .removeSurrounding("\"")
+    }
+
+    private fun String.cleanOcrPasswordForConnection(): String {
+        return removeInvisibleOcrChars()
+            .replace("\r", "")
+            .replace("\n", "")
+            .replace("\t", "")
+            .trim()
+    }
+
+    private fun String.removeInvisibleOcrChars(): String {
+        return replace("[\\u200B-\\u200D\\uFEFF]".toRegex(), "")
+    }
+
     fun onImageSelectionCanceled() {
         _state.update {
             it.copy(statusMessage = "Bạn chưa chọn ảnh nào.")
@@ -1186,7 +1602,8 @@ class MainViewModel @JvmOverloads constructor(
                         confidence = null,
                     )
                 }
-                val parsedSsid = parsed.ssid.orEmpty()
+                val parsedSsid = parsed.ssid.orEmpty().cleanOcrSsidForConnection()
+                val parsedPassword = parsed.password.orEmpty().cleanOcrPasswordForConnection()
                 val hasSsid = parsedSsid.isNotBlank()
                 val nearbyNetworks = if (hasSsid) {
                     getNearbyNetworksOffMain()
@@ -1198,7 +1615,7 @@ class MainViewModel @JvmOverloads constructor(
                     it.copy(
                         isLoading = false,
                         ssid = parsedSsid,
-                        password = parsed.password.orEmpty(),
+                        password = parsedPassword,
                         security = parsed.security.orEmpty(),
                         sourceFormat = parsed.sourceFormat.orEmpty(),
                         confidence = parsed.confidence,
@@ -1291,6 +1708,7 @@ class MainViewModel @JvmOverloads constructor(
                         nearbyNetworks = emptyList(),
                         nearbyWifiStatus = "",
                         wifiConnectionState = WifiConnectionState.Idle,
+                        ocrAutoConnectState = OcrAutoConnectState.Idle,
                         isNearbyExpanded = false,
                     )
                 }
@@ -1318,6 +1736,7 @@ class MainViewModel @JvmOverloads constructor(
                             reason = WifiConnectFailureReason.INVALID_INPUT,
                             message = message,
                         ),
+                        ocrAutoConnectState = OcrAutoConnectState.NeedUserReview,
                         isNearbyExpanded = false,
                     )
                 }
@@ -1411,6 +1830,7 @@ class MainViewModel @JvmOverloads constructor(
                 nearbyNetworks = emptyList(),
                 nearbyWifiStatus = "",
                 wifiConnectionState = WifiConnectionState.Idle,
+                ocrAutoConnectState = OcrAutoConnectState.OcrProcessing,
                 isNearbyExpanded = false,
             )
         }
@@ -1640,7 +2060,7 @@ class MainViewModel @JvmOverloads constructor(
             if (
                 bestMatch.isNotBlank() &&
                 bestScore != null &&
-                bestScore >= 0.55 &&
+                bestScore >= SSID_REVIEW_SCORE &&
                 !bestMatch.equals(ocrSsid, ignoreCase = true)
             ) {
                 return FuzzyResolution(
@@ -1711,69 +2131,18 @@ class MainViewModel @JvmOverloads constructor(
         ocrSsid: String,
         networks: List<NearbyNetwork>,
     ): SsidSuggestionState.Found? {
-        if (ocrSsid.isBlank() || networks.isEmpty()) return null
+        val best = when (val decision = WifiOcrAutoConnectPolicy.decideSsidMatch(ocrSsid, networks)) {
+            is SsidMatchDecision.AutoConnect -> decision.candidate
+            is SsidMatchDecision.SingleMatchNeedsReview -> decision.candidate
+            is SsidMatchDecision.MultipleMatchesNeedSelection -> decision.candidates.firstOrNull()
+            is SsidMatchDecision.NoMatchingWifiFound -> decision.bestCandidate
+        } ?: return null
 
-        val ocrLower = ocrSsid.lowercase(Locale.ROOT)
-        val ocrComparable = ocrSsid.normalizeForFuzzySsid()
-        var bestNetwork: NearbyNetwork? = null
-        var bestScore = 0.0
-
-        for (network in networks) {
-            val rawScore = similarityScore(ocrLower, network.ssid.lowercase(Locale.ROOT))
-            val normalizedScore = similarityScore(ocrComparable, network.ssid.normalizeForFuzzySsid())
-            val score = maxOf(rawScore, normalizedScore)
-            if (score > bestScore) {
-                bestScore = score
-                bestNetwork = network
-            }
-        }
-
-        if (bestNetwork == null || bestScore < 0.6) return null
-        if (bestNetwork.ssid.equals(ocrSsid, ignoreCase = true)) return null
-
+        if (best.network.ssid.equals(ocrSsid, ignoreCase = true)) return null
         return SsidSuggestionState.Found(
-            bestMatch = bestNetwork.ssid,
-            score = bestScore,
+            bestMatch = best.network.ssid,
+            score = best.score,
         )
-    }
-
-    private fun String.normalizeForFuzzySsid(): String {
-        return java.text.Normalizer.normalize(this, java.text.Normalizer.Form.NFD)
-            .replace("\\p{Mn}+".toRegex(), "")
-            .replace('đ', 'd')
-            .replace('Đ', 'D')
-            .lowercase(Locale.ROOT)
-            .replace("[^a-z0-9._\\-\\s]".toRegex(), "")
-            .replace("\\s+".toRegex(), " ")
-            .trim()
-    }
-
-    private fun similarityScore(a: String, b: String): Double {
-        if (a == b) return 1.0
-        if (a.isEmpty() || b.isEmpty()) return 0.0
-
-        val maxLen = maxOf(a.length, b.length)
-        val distance = levenshtein(a, b)
-        return 1.0 - (distance.toDouble() / maxLen)
-    }
-
-    private fun levenshtein(a: String, b: String): Int {
-        val m = a.length
-        val n = b.length
-        val dp = Array(m + 1) { IntArray(n + 1) }
-        for (i in 0..m) dp[i][0] = i
-        for (j in 0..n) dp[0][j] = j
-        for (i in 1..m) {
-            for (j in 1..n) {
-                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
-                dp[i][j] = minOf(
-                    dp[i - 1][j] + 1,
-                    dp[i][j - 1] + 1,
-                    dp[i - 1][j - 1] + cost,
-                )
-            }
-        }
-        return dp[m][n]
     }
 
     private fun buildParseDoneStatus(
@@ -1805,6 +2174,17 @@ class MainViewModel @JvmOverloads constructor(
         val wifiManager = app.getSystemService(WifiManager::class.java) ?: return null
         val ssid = runCatching { wifiManager.connectionInfo?.ssid.orEmpty() }.getOrDefault("")
         return ssid.normalizeWifiSsid().takeIf { it.isNotBlank() && !it.equals("<unknown ssid>", ignoreCase = true) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun buildCurrentWifiDebugSnapshot(): String {
+        val app = getApplication<Application>().applicationContext
+        val wifiManager = app.getSystemService(WifiManager::class.java)
+            ?: return "wifiManager=null"
+        val info = runCatching { wifiManager.connectionInfo }.getOrNull()
+            ?: return "connectionInfo=null"
+        return "ssid='${info.ssid.normalizeWifiSsid()}', bssid='${info.bssid}', " +
+            "networkId=${info.networkId}, rssi=${info.rssi}, freq=${info.frequency}"
     }
 
     @Suppress("DEPRECATION")
@@ -1926,6 +2306,21 @@ class MainViewModel @JvmOverloads constructor(
             ) == PackageManager.PERMISSION_GRANTED
 
         return hasLocation && hasNearbyWifi
+    }
+
+    private fun buildPermissionDebugSummary(): String {
+        val app = getApplication<Application>().applicationContext
+        fun granted(permission: String): Boolean {
+            return runCatching {
+                ContextCompat.checkSelfPermission(app, permission) == PackageManager.PERMISSION_GRANTED
+            }.getOrDefault(false)
+        }
+        val fine = granted(Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = granted(Manifest.permission.ACCESS_COARSE_LOCATION)
+        val nearby = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            granted(Manifest.permission.NEARBY_WIFI_DEVICES)
+        return "fine=$fine, coarse=$coarse, nearbyWifi=$nearby, " +
+            "wifiEnabled=${isWifiEnabled()}, locationEnabled=${isLocationServiceEnabled()}"
     }
 
     private fun isWifiEnabled(): Boolean {
@@ -2051,9 +2446,10 @@ private data class OcrCredentialResolution(
 
 private const val localOcrHighConfidenceThreshold = 0.84
 private const val localOcrReviewConfidenceThreshold = 0.72
-private const val autoApplyFuzzySsidThreshold = 0.86
-private const val maxOcrDecodeSide = 1600
+private const val maxOcrDecodeSide = 2200
 private const val wifiScanCacheMillis = 15_000L
+private const val wifiConnectionTimeoutMillis = 90_000L
+private const val WIFI_FLOW_LOG_TAG = "SmartWifiFlow"
 
 private data class WifiConnectionPlan(
     val candidateSsids: List<String>,
@@ -2062,6 +2458,9 @@ private data class WifiConnectionPlan(
     val requiresUserSelection: Boolean = false,
     val suggestedSsid: String? = null,
     val suggestedScore: Double? = null,
+    val noMatchingWifiFound: Boolean = false,
+    val reviewMessage: String? = null,
+    val selectionReason: String = "",
 )
 
 enum class NetworkDetailOrigin {
@@ -2118,6 +2517,7 @@ data class MainUiState(
     val nearbyNetworks: List<NearbyNetwork> = emptyList(),
     val nearbyWifiStatus: String = "",
     val wifiConnectionState: WifiConnectionState = WifiConnectionState.Idle,
+    val ocrAutoConnectState: OcrAutoConnectState = OcrAutoConnectState.Idle,
     val isNearbyExpanded: Boolean = false,
     val historyRecords: List<SavedWifiRecord> = emptyList(),
     val selectedNetworkDetail: NetworkDetailUiModel? = null,
@@ -2163,6 +2563,20 @@ sealed class WifiConnectionState {
 enum class WifiConnectionPhase {
     CONNECTING_WIFI,
     VERIFYING_INTERNET,
+}
+
+sealed class OcrAutoConnectState {
+    object Idle : OcrAutoConnectState()
+    object OcrProcessing : OcrAutoConnectState()
+    object OcrParsed : OcrAutoConnectState()
+    object NearbyWifiScanning : OcrAutoConnectState()
+    object MatchingSsid : OcrAutoConnectState()
+    data class AutoConnecting(val ssid: String) : OcrAutoConnectState()
+    data class AutoConnectSuccess(val ssid: String) : OcrAutoConnectState()
+    data class AutoConnectFailed(val message: String) : OcrAutoConnectState()
+    object NeedUserReview : OcrAutoConnectState()
+    data class MultipleMatchesNeedSelection(val message: String) : OcrAutoConnectState()
+    data class NoMatchingWifiFound(val message: String) : OcrAutoConnectState()
 }
 
 sealed class SsidSuggestionState {
@@ -2284,3 +2698,60 @@ private fun Long.toNetworkDetailDate(): String {
 
 private fun String.normalizeWifiSsid(): String = trim().removePrefix("\"").removeSuffix("\"")
 
+private fun String?.requiresPasswordForConnection(): Boolean {
+    val normalized = orEmpty().uppercase(Locale.ROOT)
+    return when {
+        normalized.isBlank() -> true
+        normalized.contains("OPEN") -> false
+        normalized.contains("OWE") -> false
+        else -> true
+    }
+}
+
+private fun String?.debugPasswordForLog(): String {
+    val value = this.orEmpty()
+    if (value.isBlank()) return "blank"
+    val visiblePrefix = value.take(1)
+    val visibleSuffix = value.takeLast(1).takeIf { value.length > 1 }.orEmpty()
+    val ascii = value.all { it.code in 32..126 }
+    return "masked='$visiblePrefix***$visibleSuffix', length=${value.length}, ascii=$ascii"
+}
+
+private fun String.debugWifiValue(): String {
+    return replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+}
+
+private fun List<NearbyNetwork>.toDebugScanList(): String {
+    if (isEmpty()) return "[]"
+    return joinToString(prefix = "[", postfix = "]") { network ->
+        "{ssid='${network.ssid.debugWifiValue()}', rssi=${network.signalDbm}, " +
+            "level=${network.signalLevel}, bssid='${network.bssid}', security='${network.securityLabel}', " +
+            "freq=${network.frequencyMhz}}"
+    }
+}
+
+private fun WifiConnectResult.toDebugString(): String {
+    return when (this) {
+        is WifiConnectResult.Success ->
+            "Success(ssid='$ssid', hasNetwork=${network != null})"
+        is WifiConnectResult.ConnectedWithoutInternet ->
+            "ConnectedWithoutInternet(ssid='$ssid', hasInternetCapability=$hasInternetCapability, captive=$isCaptivePortal, hasNetwork=${network != null})"
+        is WifiConnectResult.Failed ->
+            "Failed(reason=$reason, message='${message.orEmpty()}')"
+    }
+}
+
+private fun SsidMatchDecision.toDebugString(): String {
+    return when (this) {
+        is SsidMatchDecision.AutoConnect ->
+            "AutoConnect(ssid='${candidate.network.ssid}', score=${candidate.score}, exact=${candidate.isExactNormalized})"
+        is SsidMatchDecision.SingleMatchNeedsReview ->
+            "SingleMatchNeedsReview(ssid='${candidate.network.ssid}', score=${candidate.score})"
+        is SsidMatchDecision.MultipleMatchesNeedSelection ->
+            "MultipleMatches(${candidates.joinToString { "${it.network.ssid}:${it.score}" }})"
+        is SsidMatchDecision.NoMatchingWifiFound ->
+            "NoMatchingWifiFound(best=${bestCandidate?.network?.ssid}, score=${bestCandidate?.score})"
+    }
+}

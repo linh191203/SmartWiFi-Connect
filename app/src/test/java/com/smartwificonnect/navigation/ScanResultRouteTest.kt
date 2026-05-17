@@ -2,6 +2,7 @@ package com.smartwificonnect.navigation
 
 import com.smartwificonnect.MainUiState
 import com.smartwificonnect.NearbyNetwork
+import com.smartwificonnect.OcrAutoConnectState
 import com.smartwificonnect.WifiConnectionState
 import com.smartwificonnect.wifi.WifiConnectFailureReason
 import org.junit.Assert.assertEquals
@@ -46,6 +47,7 @@ class ScanResultRouteTest {
                 ssid = "CafeNet",
                 password = "Secret123",
                 nearbyNetworks = listOf(NearbyNetwork(ssid = "CafeNet", signalLevel = 4)),
+                ocrAutoConnectState = OcrAutoConnectState.AutoConnecting("CafeNet"),
             ),
         )
 
@@ -109,6 +111,34 @@ class ScanResultRouteTest {
                     sourceFormat = "share_link",
                     ssid = "CafeNet",
                     password = "Secret123",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun shouldAutoConnectAfterQrScan_returnsTrueForWifiQrPayload() {
+        assertTrue(
+            shouldAutoConnectAfterQrScan(
+                MainUiState(
+                    sourceFormat = "qr_local",
+                    ssid = "CafeNet",
+                    password = "Secret123",
+                    ocrAutoConnectState = OcrAutoConnectState.AutoConnecting("CafeNet"),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun shouldAutoConnectAfterQrScan_returnsFalseAfterUserEditsCredentials() {
+        assertFalse(
+            shouldAutoConnectAfterQrScan(
+                MainUiState(
+                    sourceFormat = "qr_local",
+                    ssid = "CafeNet",
+                    password = "Secret123",
+                    ocrAutoConnectState = OcrAutoConnectState.NeedUserReview,
                 ),
             ),
         )
@@ -247,8 +277,8 @@ class ScanResultRouteTest {
     }
 
     @Test
-    fun shouldOpenConnectionFailedScreen_keepsManualEntryFailuresDirect() {
-        assertTrue(
+    fun shouldOpenConnectionFailedScreen_keepsManualEntryFailuresInline() {
+        assertFalse(
             shouldOpenConnectionFailedScreen(
                 currentRoute = Routes.MANUAL_ENTRY,
                 state = failureState(scanSource = ""),

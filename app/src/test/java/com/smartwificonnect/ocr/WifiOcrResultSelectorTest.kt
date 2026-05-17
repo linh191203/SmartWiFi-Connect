@@ -75,4 +75,32 @@ class WifiOcrResultSelectorTest {
         assertNotNull(result.confidence)
         assertTrue(result.confidence!! >= 0.60)
     }
+
+    @Test
+    fun selectBestResult_prefersMoreCompletePasswordWhenTruncatedVariantRepeats() {
+        val result = WifiOcrResultSelector.selectBestResult(
+            listOf(
+                "WIFI : Cafe MOC\nPASS : Cf22222",
+                "WIFI : Cafe MOC\nPASS : Cf22222",
+                "WIFI : Cafe MOC\nPASS : Cf222222",
+            ),
+        )
+
+        assertEquals("Cafe MOC", result.credentials.ssid)
+        assertEquals("Cf222222", result.credentials.password)
+    }
+
+    @Test
+    fun selectBestResult_prefersMoreCompleteSsidWhenShorterVariantRepeats() {
+        val result = WifiOcrResultSelector.selectBestResult(
+            listOf(
+                "WIFI : Viettel Hien Nguy\nPASS : Secret123",
+                "WIFI : Viettel Hien Nguy\nPASS : Secret123",
+                "WIFI : Viettel Hien Nguyen\nPASS : Secret123",
+            ),
+        )
+
+        assertEquals("Viettel Hien Nguyen", result.credentials.ssid)
+        assertEquals("Secret123", result.credentials.password)
+    }
 }

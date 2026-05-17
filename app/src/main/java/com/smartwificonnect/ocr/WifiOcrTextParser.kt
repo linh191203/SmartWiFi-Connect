@@ -5,8 +5,13 @@ import java.util.regex.Pattern
 
 internal object WifiOcrTextParser {
     fun extractWifiCredentials(text: String): WifiOcrCredentials {
-        val qrCredentials = parseWifiQrPayload(text)
-        if (qrCredentials.hasAnyValue()) return qrCredentials
+        val qrPayload = parseWifiQrPayloadData(text)
+        if (qrPayload != null && qrPayload.hasAnyValue()) {
+            return WifiOcrCredentials(
+                ssid = qrPayload.ssid,
+                password = qrPayload.password,
+            )
+        }
 
         val lines = text
             .lineSequence()
@@ -85,15 +90,17 @@ internal object WifiOcrTextParser {
         )
     }
 
-    private fun parseWifiQrPayload(text: String): WifiOcrCredentials {
+    internal fun parseWifiQrPayloadData(text: String): WifiQrPayloadData? {
         val payload = text.trim()
-        if (!payload.startsWith("WIFI:", ignoreCase = true)) return WifiOcrCredentials()
+        if (!payload.startsWith("WIFI:", ignoreCase = true)) return null
 
         val fields = parseWifiQrFields(payload.substringAfter(':'))
+        val security = fields["T"].orEmpty().normalizeQrSecurity()
 
-        return WifiOcrCredentials(
+        return WifiQrPayloadData(
             ssid = fields["S"].orEmpty(),
             password = fields["P"].orEmpty(),
+            security = security,
         )
     }
 
@@ -165,6 +172,19 @@ internal object WifiOcrTextParser {
         return trim()
             .trim('"', '\'', '`')
             .trim()
+    }
+
+    private fun String.normalizeQrSecurity(): String {
+        val value = trim()
+        if (value.isBlank()) return ""
+        return when {
+            value.equals("nopass", ignoreCase = true) -> "Open"
+            value.contains("SAE", ignoreCase = true) || value.contains("WPA3", ignoreCase = true) -> "WPA3"
+            value.contains("WPA2", ignoreCase = true) -> "WPA2"
+            value.contains("WPA", ignoreCase = true) -> "WPA/WPA2"
+            value.contains("WEP", ignoreCase = true) -> "WEP"
+            else -> value
+        }
     }
 
     private fun String.sanitizeSsidValue(): String {
@@ -697,6 +717,16 @@ internal object WifiOcrTextParser {
         val value: String,
         val score: Int,
     )
+}
+
+internal data class WifiQrPayloadData(
+    val ssid: String = "",
+    val password: String = "",
+    val security: String = "",
+)
+
+private fun WifiQrPayloadData.hasAnyValue(): Boolean {
+    return ssid.isNotBlank() || password.isNotBlank() || security.isNotBlank()
 }
 
 internal fun String.normalizeForOcrMatching(): String {

@@ -335,8 +335,8 @@ class WifiOcrProcessor : WifiOcrEngine {
     }
 
     companion object {
-        private const val maxRecognitionSide = 1440
-        private const val minRecognitionSide = 720
+        private const val maxRecognitionSide = 2048
+        private const val minRecognitionSide = 960
         private const val minimumPassesBeforeEarlyStop = 3
 
         private val recognitionPasses = listOf(

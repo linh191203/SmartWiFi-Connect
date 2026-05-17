@@ -1,29 +1,29 @@
 package com.smartwificonnect.feature.permission
 
-import android.Manifest
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -35,7 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import com.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.smartwificonnect.ui.theme.SmartWifiAppTheme
 
@@ -44,7 +43,6 @@ fun CameraPermissionScreen(
     onAllowClick: () -> Unit,
     onDenyClick: () -> Unit,
 ) {
-    val context = LocalContext.current
     val dark = LocalAppDarkMode.current
     val backgroundTop = if (dark) Color(0xFF10131B) else Color(0xFFF7F9FC)
     val backgroundBottom = if (dark) Color(0xFF171A24) else Color(0xFFEBF2FC)
@@ -53,16 +51,6 @@ fun CameraPermissionScreen(
     val brandColor = if (dark) Color(0xFF6D70F6) else Color(0xFF474ADB)
     val secondaryButton = if (dark) Color(0xFF2B3240) else Color(0xFFD9DEE5)
     val secondaryText = if (dark) Color(0xFFE4E8F0) else Color(0xFF4D5361)
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-    ) { isGranted ->
-        if (isGranted) {
-            onAllowClick()
-        } else {
-            onDenyClick()
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -74,157 +62,168 @@ fun CameraPermissionScreen(
     ) {
         DecorativeDotGrid(modifier = Modifier.padding(start = 20.dp, top = 44.dp))
 
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 36.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+                .statusBarsPadding()
+                .navigationBarsPadding(),
         ) {
-            PermissionHero()
-
-            Spacer(modifier = Modifier.size(26.dp))
-
-            Text(
-                text = "Quyền truy cập camera",
-                color = titleColor,
-                style = androidx.compose.material3.MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.ExtraBold,
-                textAlign = TextAlign.Center,
-            )
-            Spacer(modifier = Modifier.size(12.dp))
-            Text(
-                text = "SmartWiFi-Connect cần quyền truy\ncập camera để quét mã QR.",
-                color = bodyColor,
-                style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-            )
-
-            Spacer(modifier = Modifier.size(22.dp))
-
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = Color(0xFF8DECD7),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Security,
-                        contentDescription = null,
-                        tint = Color(0xFF166857),
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Text(
-                        text = "Riêng tư & Bảo mật tuyệt đối",
-                        color = Color(0xFF166857),
-                        style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
-                }
+            val compact = maxHeight < 760.dp
+            val heroSize = if (compact) 220.dp else 292.dp
+            val buttonTextStyle = if (compact) {
+                androidx.compose.material3.MaterialTheme.typography.titleLarge
+            } else {
+                androidx.compose.material3.MaterialTheme.typography.headlineSmall
             }
 
-            Spacer(modifier = Modifier.size(54.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = if (compact) 18.dp else 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                PermissionHero(size = heroSize)
 
-            Surface(
-                onClick = {
-                    val cameraGranted = ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.CAMERA,
-                    ) == PackageManager.PERMISSION_GRANTED
-                    if (cameraGranted) {
-                        onAllowClick()
+                Spacer(modifier = Modifier.size(if (compact) 16.dp else 22.dp))
+
+                Text(
+                    text = "Quyền truy cập camera",
+                    color = titleColor,
+                    style = if (compact) {
+                        androidx.compose.material3.MaterialTheme.typography.headlineLarge
                     } else {
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        androidx.compose.material3.MaterialTheme.typography.displaySmall
+                    },
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.size(10.dp))
+                Text(
+                    text = "SmartWiFi-Connect cần quyền truy cập camera để quét mã QR.",
+                    color = bodyColor,
+                    style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                )
+
+                Spacer(modifier = Modifier.size(if (compact) 14.dp else 20.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color = Color(0xFF8DECD7),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Security,
+                            contentDescription = null,
+                            tint = Color(0xFF166857),
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = "Riêng tư & Bảo mật tuyệt đối",
+                            color = Color(0xFF166857),
+                            style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
                     }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(999.dp),
-                color = brandColor,
-                shadowElevation = 8.dp,
-            ) {
-                Box(
-                    modifier = Modifier.padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "Cho phép truy cập",
-                        color = Color.White,
-                        style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
                 }
-            }
 
-            Spacer(modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.size(if (compact) 28.dp else 44.dp))
 
-            Surface(
-                onClick = onDenyClick,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(999.dp),
-                color = secondaryButton,
-            ) {
-                Box(
-                    modifier = Modifier.padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center,
+                Surface(
+                    onClick = onAllowClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(999.dp),
+                    color = brandColor,
+                    shadowElevation = 8.dp,
                 ) {
-                    Text(
-                        text = "Không cho phép",
-                        color = secondaryText,
-                        style = androidx.compose.material3.MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                    )
+                    Box(
+                        modifier = Modifier.padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Cho phép truy cập",
+                            color = Color.White,
+                            style = buttonTextStyle,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
                 }
+
+                Spacer(modifier = Modifier.size(12.dp))
+
+                Surface(
+                    onClick = onDenyClick,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(999.dp),
+                    color = secondaryButton,
+                ) {
+                    Box(
+                        modifier = Modifier.padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Không cho phép",
+                            color = secondaryText,
+                            style = buttonTextStyle,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.size(if (compact) 20.dp else 28.dp))
+
+                Text(
+                    text = "CÀI ĐẶT > QUYỀN TRUY CẬP > CAMERA",
+                    color = if (dark) Color(0xFF717B8D) else Color(0xFFB2BAC7),
+                    style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                )
             }
-
-            Spacer(modifier = Modifier.size(34.dp))
-
-            Text(
-                text = "CÀI ĐẶT > QUYỀN TRUY CẬP > CAMERA",
-                color = if (dark) Color(0xFF717B8D) else Color(0xFFB2BAC7),
-                style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.ExtraBold,
-            )
         }
     }
 }
 
 @Composable
-private fun PermissionHero() {
+private fun PermissionHero(size: androidx.compose.ui.unit.Dp) {
     Box(
-        modifier = Modifier.size(372.dp),
+        modifier = Modifier.size(size),
         contentAlignment = Alignment.Center,
     ) {
         val ringBlue = Color(0xFF6470FF)
         Surface(
-            modifier = Modifier.size(372.dp),
+            modifier = Modifier.size(size),
             shape = CircleShape,
             color = Color.Transparent,
             border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.06f)),
         ) {}
         Surface(
-            modifier = Modifier.size(344.dp),
+            modifier = Modifier.size(size * 0.92f),
             shape = CircleShape,
             color = Color.Transparent,
             border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.09f)),
         ) {}
         Surface(
-            modifier = Modifier.size(320.dp),
+            modifier = Modifier.size(size * 0.86f),
             shape = CircleShape,
             color = Color.Transparent,
             border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.10f)),
         ) {}
         Surface(
-            modifier = Modifier.size(286.dp),
+            modifier = Modifier.size(size * 0.77f),
             shape = CircleShape,
             color = Color.Transparent,
             border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.16f)),
         ) {}
         Surface(
-            modifier = Modifier.size(246.dp),
+            modifier = Modifier.size(size * 0.66f),
             shape = CircleShape,
             color = Color(0xFFF8FAFC),
             shadowElevation = 0.dp,
@@ -236,20 +235,20 @@ private fun PermissionHero() {
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Surface(
-                    modifier = Modifier.size(94.dp),
+                    modifier = Modifier.size(size * 0.25f),
                     shape = CircleShape,
                     color = Color(0xFFDCDDF0),
                 ) {}
                 Surface(
-                    modifier = Modifier.size(62.dp),
+                    modifier = Modifier.size(size * 0.17f),
                     shape = CircleShape,
                     color = Color(0xFFC6C8EA),
                 ) {}
                 PermissionCameraLogo(
-                    modifier = Modifier.size(width = 50.dp, height = 45.dp),
+                    modifier = Modifier.size(width = size * 0.13f, height = size * 0.12f),
                 )
             }
-            Spacer(modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.size(size * 0.05f))
             Surface(
                 shape = RoundedCornerShape(999.dp),
                 color = Color(0xFFDDE1EA),

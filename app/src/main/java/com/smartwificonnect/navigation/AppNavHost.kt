@@ -3,6 +3,7 @@ package com.smartwificonnect.navigation
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -28,6 +29,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import com.smartwificonnect.MainUiState
 import com.smartwificonnect.MainViewModel
+import com.smartwificonnect.OcrAutoConnectState
 import com.smartwificonnect.R
 import com.smartwificonnect.SharedWifiLinkResult
 import com.smartwificonnect.WifiConnectionState
@@ -73,7 +75,9 @@ fun AppNavHost(
     var awaitingImageOcrResult by remember { mutableStateOf(false) }
     var pendingImageOcrAutoConnect by remember { mutableStateOf(false) }
     var lastSharedAutoConnectKey by remember { mutableStateOf<String?>(null) }
+    var lastQrAutoConnectKey by remember { mutableStateOf<String?>(null) }
     var pendingCameraRoute by remember { mutableStateOf<String?>(null) }
+    var pendingNearbyWifiPermissionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     val currentOcrFailureReviewKey = remember(
         mainState.ocrText,
         mainState.scanSource,
@@ -89,6 +93,16 @@ fun AppNavHost(
         mainState.security,
     ) {
         sharedWifiAutoConnectKeyFor(mainState)
+    }
+    val currentQrAutoConnectKey = remember(
+        mainState.sourceFormat,
+        mainState.ocrText,
+        mainState.ssid,
+        mainState.password,
+        mainState.security,
+        mainState.ocrAutoConnectState,
+    ) {
+        qrAutoConnectKeyFor(mainState)
     }
     var pendingOcrFailureReviewKey by remember { mutableStateOf<String?>(null) }
     var activeFailureRedirectedToOcrResult by remember { mutableStateOf(false) }
@@ -124,6 +138,47 @@ fun AppNavHost(
             navController.navigate(Routes.cameraPermissionRoute(nextRoute))
         }
     }
+    val nearbyWifiPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+    ) { permissions ->
+        val action = pendingNearbyWifiPermissionAction
+        pendingNearbyWifiPermissionAction = null
+        val allGranted = nearbyWifiPermissions().all { permission ->
+            permissions[permission] == true ||
+                ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!allGranted) {
+            mainViewModel.postTransientUserMessage("Chưa có quyền Vị trí/Nearby Wi-Fi nên ứng dụng có thể cần bạn chọn SSID thủ công.")
+        }
+        if (action != null) {
+            action()
+        } else {
+            mainViewModel.refreshNearbyWifiNetworks(recalculateFuzzy = true)
+        }
+    }
+    val runAfterNearbyWifiPermission: (() -> Unit) -> Unit = { action ->
+        val missingPermissions = nearbyWifiPermissions().filter { permission ->
+            ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missingPermissions.isEmpty()) {
+            action()
+        } else {
+            pendingNearbyWifiPermissionAction = action
+            nearbyWifiPermissionLauncher.launch(missingPermissions.toTypedArray())
+        }
+    }
+    val startGalleryOcrWithWifiScanReady: (Uri) -> Unit = { uri ->
+        runAfterNearbyWifiPermission {
+            awaitingImageOcrResult = true
+            mainViewModel.startOcrFromGallery(uri)
+        }
+    }
+    val startCameraOcrWithWifiScanReady: (Bitmap) -> Unit = { bitmap ->
+        runAfterNearbyWifiPermission {
+            awaitingImageOcrResult = true
+            mainViewModel.startOcrFromCamera(bitmap)
+        }
+    }
     val pickImageLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent(),
     ) { uri ->
@@ -132,13 +187,7 @@ fun AppNavHost(
             mainViewModel.onImageSelectionCanceled()
             return@rememberLauncherForActivityResult
         }
-        awaitingImageOcrResult = true
-        mainViewModel.startOcrFromGallery(uri)
-    }
-    val nearbyWifiPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions(),
-    ) {
-        mainViewModel.refreshNearbyWifiNetworks(recalculateFuzzy = true)
+        startGalleryOcrWithWifiScanReady(uri)
     }
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -172,6 +221,9 @@ fun AppNavHost(
         if (missingPermissions.isEmpty()) {
             mainViewModel.refreshNearbyWifiNetworks(recalculateFuzzy = true)
         } else {
+            pendingNearbyWifiPermissionAction = {
+                mainViewModel.refreshNearbyWifiNetworks(recalculateFuzzy = true)
+            }
             nearbyWifiPermissionLauncher.launch(missingPermissions.toTypedArray())
         }
     }
@@ -223,12 +275,33 @@ fun AppNavHost(
         mainState.isLoading,
         mainState.wifiConnectionState,
     ) {
+        if (currentSharedWifiKey == null) {
+            lastSharedAutoConnectKey = null
+            return@LaunchedEffect
+        }
         if (
-            currentSharedWifiKey != null &&
             currentSharedWifiKey != lastSharedAutoConnectKey &&
             shouldAutoConnectAfterSharedWifi(mainState)
         ) {
             lastSharedAutoConnectKey = currentSharedWifiKey
+            connectWifiWithPermission()
+        }
+    }
+
+    LaunchedEffect(
+        currentQrAutoConnectKey,
+        mainState.isLoading,
+        mainState.wifiConnectionState,
+    ) {
+        if (currentQrAutoConnectKey == null) {
+            lastQrAutoConnectKey = null
+            return@LaunchedEffect
+        }
+        if (
+            currentQrAutoConnectKey != lastQrAutoConnectKey &&
+            shouldAutoConnectAfterQrScan(mainState)
+        ) {
+            lastQrAutoConnectKey = currentQrAutoConnectKey
             connectWifiWithPermission()
         }
     }
@@ -493,8 +566,7 @@ fun AppNavHost(
                     navController.popBackStack()
                 },
                 onCaptureClick = { bitmap ->
-                    awaitingImageOcrResult = true
-                    mainViewModel.startOcrFromCamera(bitmap)
+                    startCameraOcrWithWifiScanReady(bitmap)
                 },
                 onCaptureUnavailable = mainViewModel::onCameraPreviewUnavailable,
                 onSwitchToQrClick = { navController.navigate(Routes.SCAN_QR) },
@@ -740,15 +812,18 @@ internal fun shouldOpenConnectionFailedScreen(
 }
 
 internal fun shouldAutoConnectAfterImageScan(state: MainUiState): Boolean {
-    val hasConnectableCredentials = state.ssid.isNotBlank() && state.password.isNotBlank()
-    val hasExactScannedSsid = state.nearbyNetworks.any { network ->
-        network.ssid.equals(state.ssid, ignoreCase = true)
-    }
     return !state.isLoading &&
         state.autoConnectEnabled &&
-        hasConnectableCredentials &&
-        state.sourceFormat == "ocr_local_confident" &&
-        hasExactScannedSsid &&
+        state.ssid.isNotBlank() &&
+        state.ocrAutoConnectState is OcrAutoConnectState.AutoConnecting &&
+        state.wifiConnectionState == WifiConnectionState.Idle
+}
+
+internal fun shouldAutoConnectAfterQrScan(state: MainUiState): Boolean {
+    return !state.isLoading &&
+        state.sourceFormat == "qr_local" &&
+        state.ssid.isNotBlank() &&
+        state.ocrAutoConnectState is OcrAutoConnectState.AutoConnecting &&
         state.wifiConnectionState == WifiConnectionState.Idle
 }
 
@@ -780,11 +855,25 @@ private fun sharedWifiAutoConnectKeyFor(state: MainUiState): String? {
     }
 }
 
+private fun qrAutoConnectKeyFor(state: MainUiState): String? {
+    return if (state.sourceFormat == "qr_local" && state.ocrAutoConnectState is OcrAutoConnectState.AutoConnecting) {
+        listOf(
+            state.sourceFormat.trim(),
+            state.ocrText.trim(),
+            state.ssid.trim(),
+            state.password,
+            state.security.trim(),
+        ).joinToString("::")
+    } else {
+        null
+    }
+}
+
 private val reviewSourceFormats = setOf("ocr_local_review", "ai_ocr", "ocr_server")
 private val imageOcrResultFormats = setOf("ocr_local_confident", "ocr_local_review", "ai_ocr", "ocr_server")
 private val sharedWifiAutoConnectFormats = setOf("share_link")
 private val ocrFailureReviewRoutes = setOf(Routes.OCR_RESULT, Routes.REVIEW)
-private val directFailureRoutes = setOf(Routes.MANUAL_ENTRY, Routes.NETWORK_DETAIL)
+private val directFailureRoutes = setOf(Routes.NETWORK_DETAIL)
 private val scanTriggerRoutesForFailures = setOf(Routes.SCAN_IMAGE, Routes.SCAN_QR)
 private val shareSuccessReturnRoutes = setOf(Routes.SCAN_QR, Routes.OCR_RESULT)
 

@@ -65,7 +65,7 @@ internal object WifiOcrResultSelector {
         explicitLabelOf: (EvaluatedCandidate) -> Boolean,
         relationTarget: String = "",
     ): String {
-        val groups = candidates
+        val evidence = candidates
             .mapNotNull { candidate ->
                 val value = valueOf(candidate).trim()
                 if (value.isBlank()) {
@@ -78,26 +78,29 @@ internal object WifiOcrResultSelector {
                     )
                 }
             }
-            .groupBy(FieldEvidence::value)
 
-        if (groups.isEmpty()) return bestOverallValue
+        if (evidence.isEmpty()) return bestOverallValue
 
-        return groups.entries
-            .map { (value, evidence) ->
-                val maxScore = evidence.maxOf { it.score }
-                val totalRawScore = evidence.sumOf { it.score }
-                val explicitLabelHits = evidence.count { it.hasExplicitLabel }
+        val groups = buildFieldClusters(evidence, bestOverallValue)
+
+        return groups
+            .map { cluster ->
+                val representative = cluster.selectRepresentative(bestOverallValue)
+                val maxScore = cluster.evidence.maxOf { it.score }
+                val totalRawScore = cluster.evidence.sumOf { it.score }
+                val explicitLabelHits = cluster.evidence.count { it.hasExplicitLabel }
                 FieldValueScore(
-                    value = value,
+                    value = representative.value,
                     aggregateScore = maxScore +
-                        (evidence.size * 24) +
+                        (cluster.evidence.size * 24) +
                         (explicitLabelHits * 16) +
-                        value.relationBonus(relationTarget, explicitLabelHits),
+                        representative.value.completenessBonus() +
+                        representative.value.relationBonus(relationTarget, explicitLabelHits),
                     maxScore = maxScore,
                     totalRawScore = totalRawScore,
-                    occurrenceCount = evidence.size,
+                    occurrenceCount = cluster.evidence.size,
                     explicitLabelHits = explicitLabelHits,
-                    isBestOverallValue = value == bestOverallValue,
+                    isBestOverallValue = representative.value == bestOverallValue,
                 )
             }
             .maxWithOrNull(
@@ -110,6 +113,32 @@ internal object WifiOcrResultSelector {
             )
             ?.value
             .orEmpty()
+    }
+
+    private fun buildFieldClusters(
+        evidence: List<FieldEvidence>,
+        bestOverallValue: String,
+    ): List<FieldCluster> {
+        val clusters = mutableListOf<MutableList<FieldEvidence>>()
+        val sortedEvidence = evidence.sortedWith(
+            compareByDescending<FieldEvidence> { it.value.completenessScore() }
+                .thenByDescending { it.score }
+                .thenByDescending { if (it.hasExplicitLabel) 1 else 0 }
+                .thenByDescending { if (it.value == bestOverallValue) 1 else 0 },
+        )
+
+        for (item in sortedEvidence) {
+            val cluster = clusters.firstOrNull { group ->
+                group.any { existing -> existing.value.isSimilarRecognizedField(item.value) }
+            }
+            if (cluster != null) {
+                cluster += item
+            } else {
+                clusters += mutableListOf(item)
+            }
+        }
+
+        return clusters.map { FieldCluster(it.toList()) }
     }
 
     private fun evaluate(text: String): EvaluatedCandidate {
@@ -230,6 +259,36 @@ internal object WifiOcrResultSelector {
         return normalizeForOcrMatching().filter(Char::isLetterOrDigit)
     }
 
+    private fun String.completenessScore(): Int {
+        val compact = compactComparableToken()
+        val digitCount = count(Char::isDigit)
+        val letterCount = count(Char::isLetter)
+        return (compact.length * 6) + (length * 2) + (digitCount * 3) + letterCount
+    }
+
+    private fun String.completenessBonus(): Int {
+        return completenessScore().coerceAtMost(64)
+    }
+
+    private fun String.isSimilarRecognizedField(other: String): Boolean {
+        if (equals(other, ignoreCase = true)) return true
+
+        val left = compactComparableToken()
+        val right = other.compactComparableToken()
+        if (left.isBlank() || right.isBlank()) return false
+        if (left == right) return true
+
+        val shorter = if (left.length <= right.length) left else right
+        val longer = if (left.length > right.length) left else right
+        val similarity = similarityScore(left, right)
+
+        if (longer.contains(shorter) && similarity >= 0.86) {
+            return true
+        }
+
+        return false
+    }
+
     private fun similarityScore(a: String, b: String): Double {
         if (a == b) return 1.0
         if (a.isEmpty() || b.isEmpty()) return 0.0
@@ -277,6 +336,19 @@ internal object WifiOcrResultSelector {
         val score: Int,
         val hasExplicitLabel: Boolean,
     )
+
+    private data class FieldCluster(
+        val evidence: List<FieldEvidence>,
+    ) {
+        fun selectRepresentative(bestOverallValue: String): FieldEvidence {
+            return evidence.maxWithOrNull(
+                compareBy<FieldEvidence> { it.value.completenessScore() }
+                    .thenBy { it.score }
+                    .thenBy { if (it.hasExplicitLabel) 1 else 0 }
+                    .thenBy { if (it.value == bestOverallValue) 1 else 0 },
+            ) ?: evidence.first()
+        }
+    }
 
     private data class FieldValueScore(
         val value: String,

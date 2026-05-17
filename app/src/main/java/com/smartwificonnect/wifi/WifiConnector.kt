@@ -1,12 +1,18 @@
 package com.smartwificonnect.wifi
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
+import android.os.Build
+import android.util.Log
+import com.smartwificonnect.BuildConfig
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -22,6 +28,7 @@ class WifiConnector(
 ) {
     private val appContext = context.applicationContext
     private val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
+    private val wifiManager = appContext.getSystemService(WifiManager::class.java)
     private var activeCallback: ConnectivityManager.NetworkCallback? = null
     private var boundNetwork: Network? = null
 
@@ -50,8 +57,15 @@ class WifiConnector(
         }
 
         val normalizedPassword = password?.trim().orEmpty()
+        logWifiConnect(
+                "connect start api=WifiNetworkSpecifier android=${Build.VERSION.SDK_INT}, " +
+                "targetSsid='$normalizedSsid', password=${normalizedPassword.debugPasswordForLog()}, " +
+                "security='${security.orEmpty()}', permissions=${appContext.buildPermissionDebugSummary()}, " +
+                "current=${wifiManager.currentWifiDebugSnapshot()}",
+        )
         val unsupportedSecurityMessage = validateSecurityMode(security)
         if (unsupportedSecurityMessage != null) {
+            logWifiConnect("connect rejected unsupported security='$security': $unsupportedSecurityMessage")
             continuation.resume(
                 WifiConnectResult.Failed(
                     WifiConnectFailureReason.INVALID_INPUT,
@@ -62,6 +76,7 @@ class WifiConnector(
         }
 
         if (normalizedPassword.isNotEmpty() && normalizedPassword.length !in 8..63) {
+            logWifiConnect("connect rejected password length=${normalizedPassword.length}")
             continuation.resume(
                 WifiConnectResult.Failed(
                     WifiConnectFailureReason.INVALID_INPUT,
@@ -72,6 +87,7 @@ class WifiConnector(
         }
 
         if (normalizedPassword.isNotEmpty() && !normalizedPassword.isPrintableAsciiPassphrase()) {
+            logWifiConnect("connect rejected password nonAscii length=${normalizedPassword.length}")
             continuation.resume(
                 WifiConnectResult.Failed(
                     WifiConnectFailureReason.INVALID_INPUT,
@@ -87,6 +103,7 @@ class WifiConnector(
             security,
         )
         val request = createRequest(specifier)
+        logWifiConnect("requestNetwork submitting api=WifiNetworkSpecifier target='$normalizedSsid'")
 
         fun cancelInternetFallback() {
             internetFallbackJob?.cancel()
@@ -98,11 +115,17 @@ class WifiConnector(
             releaseRequest: Boolean,
         ) {
             cancelInternetFallback()
+            logWifiConnect(
+                "finish preBind result=${result.toDebugString()}, releaseRequest=$releaseRequest, " +
+                    "current=${wifiManager.currentWifiDebugSnapshot()}",
+            )
             val finalResult = if (result is WifiConnectResult.Success && result.network != null) {
                 if (manager.bindProcessToNetwork(result.network)) {
                     boundNetwork = result.network
+                    logWifiConnect("bindProcessToNetwork success network=${result.network}")
                     result
                 } else {
+                    logWifiConnect("bindProcessToNetwork failed network=${result.network}")
                     WifiConnectResult.Failed(
                         reason = WifiConnectFailureReason.NO_INTERNET,
                         message = "Không thể dùng mạng Wi-Fi vừa kết nối để truy cập Internet.",
@@ -121,6 +144,10 @@ class WifiConnector(
         fun rememberJoinedWithoutInternet(result: WifiConnectResult.ConnectedWithoutInternet) {
             if (!continuation.isActive) return
             joinedWithoutInternet = result
+            logWifiConnect(
+                "joined without validated internet, waiting grace=${internetValidationGraceMillis}ms, " +
+                    "result=${result.toDebugString()}, current=${wifiManager.currentWifiDebugSnapshot()}",
+            )
             if (internetFallbackJob?.isActive == true) return
 
             internetFallbackJob = launch {
@@ -139,15 +166,19 @@ class WifiConnector(
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 val capabilities = manager.getNetworkCapabilities(network)
+                logWifiConnect(
+                    "callback onAvailable network=$network, caps=${capabilities.toDebugString()}, " +
+                        "current=${wifiManager.currentWifiDebugSnapshot()}",
+                )
                 val observedResult = capabilities?.toWifiConnectionResult(
                     network = network,
                     expectedSsid = normalizedSsid,
-                ) ?: WifiConnectResult.ConnectedWithoutInternet(
-                    network = network,
-                    ssid = normalizedSsid,
-                    hasInternetCapability = false,
-                    isCaptivePortal = false,
+                    fallbackWifiInfo = wifiManager?.connectionInfo,
                 )
+                if (observedResult == null) {
+                    logWifiConnect("callback onAvailable waiting for stable Wi-Fi capabilities target='$normalizedSsid'")
+                    return
+                }
                 when (observedResult) {
                     is WifiConnectResult.Success -> finish(observedResult, releaseRequest = false)
                     is WifiConnectResult.ConnectedWithoutInternet -> rememberJoinedWithoutInternet(observedResult)
@@ -157,9 +188,14 @@ class WifiConnector(
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
                 if (!continuation.isActive) return
+                logWifiConnect(
+                    "callback onCapabilitiesChanged network=$network, caps=${networkCapabilities.toDebugString()}, " +
+                        "current=${wifiManager.currentWifiDebugSnapshot()}",
+                )
                 val observedResult = networkCapabilities.toWifiConnectionResult(
                     network = network,
                     expectedSsid = normalizedSsid,
+                    fallbackWifiInfo = wifiManager?.connectionInfo,
                 )
                 if (observedResult != null) {
                     when (observedResult) {
@@ -172,6 +208,7 @@ class WifiConnector(
 
             override fun onLost(network: Network) {
                 if (!continuation.isActive) return
+                logWifiConnect("callback onLost network=$network, current=${wifiManager.currentWifiDebugSnapshot()}")
                 finish(
                     result = WifiConnectResult.Failed(
                         reason = WifiConnectFailureReason.AUTHENTICATION_OR_UNAVAILABLE,
@@ -182,6 +219,7 @@ class WifiConnector(
             }
 
             override fun onUnavailable() {
+                logWifiConnect("callback onUnavailable target='$normalizedSsid', current=${wifiManager.currentWifiDebugSnapshot()}")
                 finish(
                     result = WifiConnectResult.Failed(
                         reason = WifiConnectFailureReason.WRONG_PASSWORD_OR_REJECTED,
@@ -201,6 +239,7 @@ class WifiConnector(
         try {
             manager.requestNetwork(request, callback)
         } catch (securityException: SecurityException) {
+            logWifiConnect("requestNetwork SecurityException=${securityException.message}")
             finish(
                 result = WifiConnectResult.Failed(
                     reason = WifiConnectFailureReason.PERMISSION_DENIED,
@@ -209,6 +248,7 @@ class WifiConnector(
                 releaseRequest = true,
             )
         } catch (throwable: Throwable) {
+            logWifiConnect("requestNetwork Throwable=${throwable.message}")
             finish(
                 result = WifiConnectResult.Failed(
                     reason = WifiConnectFailureReason.UNKNOWN,
@@ -279,7 +319,9 @@ private fun buildWifiSpecifier(
 private fun buildWifiNetworkRequest(specifier: WifiNetworkSpecifier): NetworkRequest {
     return NetworkRequest.Builder()
         .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        // WifiNetworkSpecifier can associate before Android validates internet access.
+        // Requiring INTERNET up front makes some devices reject the request immediately.
+        .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         .setNetworkSpecifier(specifier)
         .build()
 }
@@ -291,38 +333,120 @@ private fun String.isPrintableAsciiPassphrase(): Boolean {
 private fun NetworkCapabilities.toWifiConnectionResult(
     network: Network,
     expectedSsid: String,
+    fallbackWifiInfo: WifiInfo?,
 ): WifiConnectResult? {
     if (!hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
         return null
     }
-    if (wifiSsidMismatch(expectedSsid)) {
+    val actualSsid = observedWifiSsid(
+        fallbackWifiInfo = fallbackWifiInfo,
+        expectedSsid = expectedSsid,
+    )
+    if (actualSsid.isNullOrBlank()) {
+        return null
+    }
+    if (!actualSsid.equals(expectedSsid, ignoreCase = true)) {
         return WifiConnectResult.Failed(
             reason = WifiConnectFailureReason.SSID_NOT_FOUND,
-            message = "Thiết bị không kết nối vào đúng SSID đã chọn.",
+            message = "Thiết bị đang ở SSID '$actualSsid', không phải '$expectedSsid'.",
         )
     }
     val hasInternet = hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     val isValidated = hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     if (hasInternet && isValidated) {
-        return WifiConnectResult.Success(network = network, ssid = expectedSsid)
+        return WifiConnectResult.Success(network = network, ssid = actualSsid)
     }
     return WifiConnectResult.ConnectedWithoutInternet(
         network = network,
-        ssid = expectedSsid,
+        ssid = actualSsid,
         hasInternetCapability = hasInternet,
         isCaptivePortal = hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL),
     )
 }
 
-private fun NetworkCapabilities.wifiSsidMismatch(expectedSsid: String): Boolean {
-    val wifiInfo = transportInfo as? WifiInfo ?: return false
-    val actualSsid = wifiInfo.ssid.normalizeWifiSsid()
-    return actualSsid.isNotBlank() &&
-        !actualSsid.equals("<unknown ssid>", ignoreCase = true) &&
-        !actualSsid.equals(expectedSsid, ignoreCase = true)
+private fun NetworkCapabilities.observedWifiSsid(
+    fallbackWifiInfo: WifiInfo?,
+    expectedSsid: String,
+): String? {
+    val transportSsid = (transportInfo as? WifiInfo)
+        ?.ssid
+        ?.normalizeWifiSsid()
+        ?.takeKnownSsid()
+    if (transportSsid != null) {
+        return transportSsid
+    }
+    return fallbackWifiInfo
+        ?.ssid
+        ?.normalizeWifiSsid()
+        ?.takeKnownSsid()
+        ?.takeIf { it.equals(expectedSsid, ignoreCase = true) }
 }
 
 private fun String.normalizeWifiSsid(): String = trim().removePrefix("\"").removeSuffix("\"")
+
+private fun String.takeKnownSsid(): String? {
+    return takeIf { it.isNotBlank() && !it.equals("<unknown ssid>", ignoreCase = true) }
+}
+
+private fun logWifiConnect(message: String) {
+    if (BuildConfig.DEBUG) {
+        runCatching { Log.d(WIFI_CONNECT_LOG_TAG, message) }
+    }
+}
+
+private fun String?.debugPasswordForLog(): String {
+    val value = this.orEmpty()
+    if (value.isBlank()) return "blank"
+    val visiblePrefix = value.take(1)
+    val visibleSuffix = value.takeLast(1).takeIf { value.length > 1 }.orEmpty()
+    val ascii = value.all { it.code in 32..126 }
+    return "masked='$visiblePrefix***$visibleSuffix', length=${value.length}, ascii=$ascii"
+}
+
+@Suppress("DEPRECATION")
+private fun WifiManager?.currentWifiDebugSnapshot(): String {
+    val info = runCatching { this?.connectionInfo }.getOrNull()
+        ?: return "connectionInfo=null"
+    return "ssid='${info.ssid.normalizeWifiSsid()}', bssid='${info.bssid}', " +
+        "networkId=${info.networkId}, rssi=${info.rssi}, freq=${info.frequency}"
+}
+
+private fun NetworkCapabilities?.toDebugString(): String {
+    if (this == null) return "null"
+    val wifiInfo = transportInfo as? WifiInfo
+    return "wifi=${hasTransport(NetworkCapabilities.TRANSPORT_WIFI)}, " +
+        "internet=${hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)}, " +
+        "validated=${hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}, " +
+        "captive=${hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)}, " +
+        "transportSsid='${wifiInfo?.ssid?.normalizeWifiSsid().orEmpty()}', " +
+        "transportBssid='${wifiInfo?.bssid.orEmpty()}', networkId=${wifiInfo?.networkId}"
+}
+
+private fun WifiConnectResult.toDebugString(): String {
+    return when (this) {
+        is WifiConnectResult.Success ->
+            "Success(ssid='$ssid', hasNetwork=${network != null})"
+        is WifiConnectResult.ConnectedWithoutInternet ->
+            "ConnectedWithoutInternet(ssid='$ssid', hasInternetCapability=$hasInternetCapability, captive=$isCaptivePortal, hasNetwork=${network != null})"
+        is WifiConnectResult.Failed ->
+            "Failed(reason=$reason, message='${message.orEmpty()}')"
+    }
+}
+
+private fun Context.buildPermissionDebugSummary(): String {
+    fun granted(permission: String): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            runCatching { checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED }
+                .getOrDefault(false)
+    }
+    val fine = granted(Manifest.permission.ACCESS_FINE_LOCATION)
+    val coarse = granted(Manifest.permission.ACCESS_COARSE_LOCATION)
+    val nearby = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        granted(Manifest.permission.NEARBY_WIFI_DEVICES)
+    return "fine=$fine, coarse=$coarse, nearbyWifi=$nearby"
+}
+
+private const val WIFI_CONNECT_LOG_TAG = "SmartWifiConnector"
 
 sealed class WifiConnectResult {
     data class Success(

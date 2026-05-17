@@ -5,6 +5,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
 import io.mockk.Runs
 import io.mockk.every
@@ -28,15 +30,18 @@ class WifiConnectorTest {
 
     private lateinit var context: Context
     private lateinit var connectivityManager: ConnectivityManager
+    private lateinit var wifiManager: WifiManager
     private lateinit var wifiConnector: WifiConnector
 
     @Before
     fun setup() {
         context = mockk(relaxed = true)
         connectivityManager = mockk(relaxed = true)
+        wifiManager = mockk(relaxed = true)
 
         every { context.applicationContext } returns context
         every { context.getSystemService(ConnectivityManager::class.java) } returns connectivityManager
+        every { context.getSystemService(WifiManager::class.java) } returns wifiManager
         every { connectivityManager.bindProcessToNetwork(any()) } returns true
         every { connectivityManager.bindProcessToNetwork(null) } returns true
     }
@@ -60,7 +65,7 @@ class WifiConnectorTest {
         runCurrent()
 
         val mockNetwork = mockk<Network>()
-        callbackSlot.captured.onCapabilitiesChanged(mockNetwork, validatedWifiCapabilities())
+        callbackSlot.captured.onCapabilitiesChanged(mockNetwork, validatedWifiCapabilities("TestSSID"))
         advanceUntilIdle()
 
         val connectResult = result.await()
@@ -167,7 +172,7 @@ class WifiConnectorTest {
         }
         runCurrent()
 
-        callbackSlot.captured.onCapabilitiesChanged(mockk(), validatedWifiCapabilities())
+        callbackSlot.captured.onCapabilitiesChanged(mockk(), validatedWifiCapabilities("TestSSID"))
         advanceUntilIdle()
 
         assertTrue(result.await() is WifiConnectResult.Success)
@@ -202,7 +207,7 @@ class WifiConnectorTest {
         }
         runCurrent()
 
-        callbackSlot.captured.onCapabilitiesChanged(mockk(), validatedWifiCapabilities())
+        callbackSlot.captured.onCapabilitiesChanged(mockk(), validatedWifiCapabilities("OpenNetwork"))
         advanceUntilIdle()
 
         assertTrue(result.await() is WifiConnectResult.Success)
@@ -276,6 +281,86 @@ class WifiConnectorTest {
     }
 
     @Test
+    fun `connect waits when onAvailable has no stable Wi-Fi capabilities yet`() = runTest {
+        wifiConnector = buildConnector()
+
+        val callbackSlot = slot<ConnectivityManager.NetworkCallback>()
+        every {
+            connectivityManager.requestNetwork(any<NetworkRequest>(), capture(callbackSlot))
+        } just Runs
+
+        val mockNetwork = mockk<Network>()
+        every { connectivityManager.getNetworkCapabilities(mockNetwork) } returns null
+
+        val connectionTask = async {
+            wifiConnector.connect(
+                ssid = "CafeReady",
+                password = "password123",
+                security = "WPA2",
+            )
+        }
+        runCurrent()
+
+        callbackSlot.captured.onAvailable(mockNetwork)
+        runCurrent()
+
+        assertEquals(false, connectionTask.isCompleted)
+        verify(exactly = 0) {
+            connectivityManager.unregisterNetworkCallback(any<ConnectivityManager.NetworkCallback>())
+        }
+
+        callbackSlot.captured.onCapabilitiesChanged(mockNetwork, validatedWifiCapabilities("CafeReady"))
+        advanceUntilIdle()
+
+        val result = connectionTask.await()
+        assertTrue(result is WifiConnectResult.Success)
+        assertEquals("CafeReady", (result as WifiConnectResult.Success).ssid)
+    }
+
+    @Test
+    fun `connect ignores stale WifiManager SSID until transport info matches target`() = runTest {
+        val oldWifiInfo = mockk<WifiInfo>(relaxed = true) {
+            every { ssid } returns "\"OldNetwork\""
+        }
+        every { wifiManager.connectionInfo } returns oldWifiInfo
+        wifiConnector = buildConnector()
+
+        val callbackSlot = slot<ConnectivityManager.NetworkCallback>()
+        every {
+            connectivityManager.requestNetwork(any<NetworkRequest>(), capture(callbackSlot))
+        } just Runs
+
+        val mockNetwork = mockk<Network>()
+        every {
+            connectivityManager.getNetworkCapabilities(mockNetwork)
+        } returns wifiCapabilitiesWithoutTransportInfo()
+
+        val connectionTask = async {
+            wifiConnector.connect(
+                ssid = "TargetCafe",
+                password = "password123",
+                security = "WPA2",
+            )
+        }
+        runCurrent()
+
+        callbackSlot.captured.onAvailable(mockNetwork)
+        runCurrent()
+
+        assertEquals(false, connectionTask.isCompleted)
+        verify(exactly = 0) {
+            connectivityManager.unregisterNetworkCallback(any<ConnectivityManager.NetworkCallback>())
+        }
+
+        callbackSlot.captured.onCapabilitiesChanged(mockNetwork, validatedWifiCapabilities("TargetCafe"))
+        advanceUntilIdle()
+
+        val result = connectionTask.await()
+        assertTrue(result is WifiConnectResult.Success)
+        assertEquals("TargetCafe", (result as WifiConnectResult.Success).ssid)
+    }
+
+    @Test
     fun `connect returns joined without internet when validation is missing`() = runTest {
         wifiConnector = buildConnector()
 
@@ -293,7 +378,7 @@ class WifiConnectorTest {
         }
         runCurrent()
 
-        callbackSlot.captured.onCapabilitiesChanged(mockk(), joinedWifiCapabilities())
+        callbackSlot.captured.onCapabilitiesChanged(mockk(), joinedWifiCapabilities(ssid = "CafeNoInternet"))
         advanceUntilIdle()
 
         val result = connectionTask.await()
@@ -324,7 +409,11 @@ class WifiConnectorTest {
 
         callbackSlot.captured.onCapabilitiesChanged(
             mockk(),
-            joinedWifiCapabilities(hasInternet = true, isValidated = false),
+            joinedWifiCapabilities(
+                ssid = "CafeWithUnvalidatedInternet",
+                hasInternet = true,
+                isValidated = false,
+            ),
         )
         advanceUntilIdle()
 
@@ -336,23 +425,40 @@ class WifiConnectorTest {
         verify { connectivityManager.unregisterNetworkCallback(any<ConnectivityManager.NetworkCallback>()) }
     }
 
-    private fun validatedWifiCapabilities(): NetworkCapabilities {
+    private fun validatedWifiCapabilities(ssid: String = "TestSSID"): NetworkCapabilities {
         return joinedWifiCapabilities(
+            ssid = ssid,
             hasInternet = true,
             isValidated = true,
         )
     }
 
     private fun joinedWifiCapabilities(
+        ssid: String = "TestSSID",
         hasInternet: Boolean = false,
         isValidated: Boolean = false,
         isCaptivePortal: Boolean = false,
     ): NetworkCapabilities {
+        val wifiInfo = mockk<WifiInfo>(relaxed = true) {
+            every { this@mockk.ssid } returns "\"$ssid\""
+            every { bssid } returns "00:11:22:33:44:55"
+            every { networkId } returns 42
+        }
         return mockk(relaxed = true) {
             every { hasTransport(NetworkCapabilities.TRANSPORT_WIFI) } returns true
             every { hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) } returns hasInternet
             every { hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) } returns isValidated
             every { hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) } returns isCaptivePortal
+            every { transportInfo } returns wifiInfo
+        }
+    }
+
+    private fun wifiCapabilitiesWithoutTransportInfo(): NetworkCapabilities {
+        return mockk(relaxed = true) {
+            every { hasTransport(NetworkCapabilities.TRANSPORT_WIFI) } returns true
+            every { hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) } returns true
+            every { hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) } returns false
+            every { hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL) } returns false
             every { transportInfo } returns null
         }
     }

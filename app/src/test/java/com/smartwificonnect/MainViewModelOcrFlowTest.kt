@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.ConnectivityManager
+import android.net.wifi.WifiManager
 import com.smartwificonnect.data.AiValidateData
 import com.smartwificonnect.data.ApiEnvelope
 import com.smartwificonnect.data.FuzzyNetworkPayload
@@ -16,6 +17,7 @@ import com.smartwificonnect.data.local.SavedWifiRecord
 import com.smartwificonnect.ocr.WifiOcrCredentials
 import com.smartwificonnect.ocr.WifiOcrEngine
 import com.smartwificonnect.ocr.WifiOcrRecognitionResult
+import com.smartwificonnect.navigation.shouldAutoConnectAfterImageScan
 import com.smartwificonnect.wifi.WifiConnectFailureReason
 import com.smartwificonnect.wifi.WifiConnectResult
 import io.mockk.coEvery
@@ -108,6 +110,53 @@ class MainViewModelOcrFlowTest {
             assertTrue(state.statusMessage.contains("SSID"))
             assertEquals(0, repository.validateAiCalls)
             assertEquals(0, repository.parseOcrCalls)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun startOcrFromCamera_passwordOnlyWithSingleSecuredNearbyNetwork_autoConnectsThatNetwork() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val repository = buildRepositoryMock()
+            val ocrProcessor = FakeOcrEngine()
+            val bitmap = mockk<Bitmap>()
+
+            ocrProcessor.recognitionResult = WifiOcrRecognitionResult(
+                text = "PASS : 68686868",
+                credentials = WifiOcrCredentials(
+                    ssid = "",
+                    password = "68686868",
+                ),
+                confidence = 0.91,
+            )
+
+            val viewModel = buildViewModel(
+                repository = repository,
+                ocrProcessor = ocrProcessor,
+                hasNearbyWifiPermission = { true },
+                scannedNearbyNetworks = {
+                    listOf(
+                        NearbyNetwork(
+                            ssid = "Cafe MOC",
+                            signalLevel = 4,
+                            signalDbm = -48,
+                            securityLabel = "WPA2-PSK",
+                        ),
+                    )
+                },
+            )
+            advanceUntilIdle()
+
+            viewModel.startOcrFromCamera(bitmap)
+            advanceUntilIdle()
+
+            val state = viewModel.state.value
+            assertEquals("Cafe MOC", state.ssid)
+            assertEquals("68686868", state.password)
+            assertTrue(state.ocrAutoConnectState is OcrAutoConnectState.AutoConnecting)
+            assertTrue(shouldAutoConnectAfterImageScan(state))
         } finally {
             Dispatchers.resetMain()
         }
@@ -294,10 +343,12 @@ class MainViewModelOcrFlowTest {
             assertEquals(qrText, state.ocrText)
             assertEquals("QrNet", state.ssid)
             assertEquals("QrPass123", state.password)
+            assertEquals("WPA2", state.security)
             assertEquals("qr_local", state.sourceFormat)
             assertNull(state.confidence)
             assertFalse(state.isLoading)
             assertTrue(state.aiValidation is AiValidationState.Hidden)
+            assertTrue(state.ocrAutoConnectState is OcrAutoConnectState.AutoConnecting)
 
             assertEquals(0, repository.validateAiCalls)
             assertEquals(0, repository.parseOcrCalls)
@@ -384,6 +435,167 @@ class MainViewModelOcrFlowTest {
             )
             assertTrue(state.historyRecords.isEmpty())
             assertEquals(0, repository.saveConnectedLocalCalls)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun startOcrFromCamera_exactNearbySsid_marksReadyForAutoConnect() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val repository = buildRepositoryMock()
+            val ocrProcessor = FakeOcrEngine()
+            val bitmap = mockk<Bitmap>()
+
+            ocrProcessor.recognitionResult = WifiOcrRecognitionResult(
+                text = "WIFI : CafeNet\nPASS : Secret123",
+                credentials = WifiOcrCredentials(
+                    ssid = "CafeNet",
+                    password = "Secret123",
+                ),
+                confidence = 0.91,
+            )
+
+            val viewModel = buildViewModel(
+                repository = repository,
+                ocrProcessor = ocrProcessor,
+                hasNearbyWifiPermission = { true },
+                scannedNearbyNetworks = {
+                    listOf(NearbyNetwork(ssid = "CafeNet", signalLevel = 4, securityLabel = "WPA2-PSK"))
+                },
+            )
+            advanceUntilIdle()
+
+            viewModel.startOcrFromCamera(bitmap)
+            advanceUntilIdle()
+
+            val state = viewModel.state.value
+            assertEquals("CafeNet", state.ssid)
+            assertTrue(state.ocrAutoConnectState is OcrAutoConnectState.AutoConnecting)
+            assertTrue(shouldAutoConnectAfterImageScan(state))
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun startOcrFromCamera_clearFuzzyMatch_usesRealScannedSsidForAutoConnect() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val repository = buildRepositoryMock()
+            val ocrProcessor = FakeOcrEngine()
+            val bitmap = mockk<Bitmap>()
+
+            ocrProcessor.recognitionResult = WifiOcrRecognitionResult(
+                text = "WIFI : tel Hien Nguyen\nPASS : Secret123",
+                credentials = WifiOcrCredentials(
+                    ssid = "tel Hien Nguyen",
+                    password = "Secret123",
+                ),
+                confidence = 0.91,
+            )
+
+            val viewModel = buildViewModel(
+                repository = repository,
+                ocrProcessor = ocrProcessor,
+                hasNearbyWifiPermission = { true },
+                scannedNearbyNetworks = {
+                    listOf(
+                        NearbyNetwork(ssid = "Viettel Hien Nguyen", signalLevel = 4, securityLabel = "WPA2-PSK"),
+                        NearbyNetwork(ssid = "Guest Wifi", signalLevel = 1, securityLabel = "OPEN"),
+                    )
+                },
+            )
+            advanceUntilIdle()
+
+            viewModel.startOcrFromCamera(bitmap)
+            advanceUntilIdle()
+
+            val state = viewModel.state.value
+            assertEquals("Viettel Hien Nguyen", state.ssid)
+            assertTrue(state.ocrAutoConnectState is OcrAutoConnectState.AutoConnecting)
+            assertTrue(shouldAutoConnectAfterImageScan(state))
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun startOcrFromCamera_multipleFuzzyMatches_requiresReview() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val repository = buildRepositoryMock()
+            val ocrProcessor = FakeOcrEngine()
+            val bitmap = mockk<Bitmap>()
+
+            ocrProcessor.recognitionResult = WifiOcrRecognitionResult(
+                text = "WIFI : The Monday Cof fee\nPASS : Secret123",
+                credentials = WifiOcrCredentials(
+                    ssid = "The Monday Cof fee",
+                    password = "Secret123",
+                ),
+                confidence = 0.91,
+            )
+
+            val viewModel = buildViewModel(
+                repository = repository,
+                ocrProcessor = ocrProcessor,
+                hasNearbyWifiPermission = { true },
+                scannedNearbyNetworks = {
+                    listOf(
+                        NearbyNetwork(ssid = "The Monday Coffee", signalLevel = 4, securityLabel = "WPA2-PSK"),
+                        NearbyNetwork(ssid = "The Monday Coffee 2G", signalLevel = 3, securityLabel = "WPA2-PSK"),
+                    )
+                },
+            )
+            advanceUntilIdle()
+
+            viewModel.startOcrFromCamera(bitmap)
+            advanceUntilIdle()
+
+            val state = viewModel.state.value
+            assertTrue(state.ocrAutoConnectState is OcrAutoConnectState.MultipleMatchesNeedSelection)
+            assertFalse(shouldAutoConnectAfterImageScan(state))
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test
+    fun startOcrFromCamera_invalidPassword_requiresReviewWithoutAutoConnect() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            val repository = buildRepositoryMock()
+            val ocrProcessor = FakeOcrEngine()
+            val bitmap = mockk<Bitmap>()
+
+            ocrProcessor.recognitionResult = WifiOcrRecognitionResult(
+                text = "WIFI : CafeNet\nPASS : mật khẩu123",
+                credentials = WifiOcrCredentials(
+                    ssid = "CafeNet",
+                    password = "mật khẩu123",
+                ),
+                confidence = 0.91,
+            )
+
+            val viewModel = buildViewModel(
+                repository = repository,
+                ocrProcessor = ocrProcessor,
+                hasNearbyWifiPermission = { true },
+                scannedNearbyNetworks = {
+                    listOf(NearbyNetwork(ssid = "CafeNet", signalLevel = 4, securityLabel = "WPA2-PSK"))
+                },
+            )
+            advanceUntilIdle()
+
+            viewModel.startOcrFromCamera(bitmap)
+            advanceUntilIdle()
+
+            val state = viewModel.state.value
+            assertTrue(state.ocrAutoConnectState is OcrAutoConnectState.NeedUserReview)
+            assertFalse(shouldAutoConnectAfterImageScan(state))
+            assertTrue(state.statusMessage.contains("Mật khẩu"))
         } finally {
             Dispatchers.resetMain()
         }
@@ -512,6 +724,7 @@ class MainViewModelOcrFlowTest {
         every { application.applicationContext } returns appContext
         every { appContext.applicationContext } returns appContext
         every { appContext.getSystemService(ConnectivityManager::class.java) } returns null
+        every { appContext.getSystemService(WifiManager::class.java) } returns null
 
         return MainViewModel(
             application = application,
