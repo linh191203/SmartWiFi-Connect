@@ -170,23 +170,6 @@ fun PolicyConsentScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                color = cardBg,
-                tonalElevation = 0.dp,
-            ) {
-                Text(
-                    text = PolicyConsentManager.PRIVACY_POLICY_TEXT,
-                    color = textMuted,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp,
-                    modifier = Modifier.padding(16.dp),
-                )
-            }
-
             Spacer(modifier = Modifier.height(20.dp))
 
             // Privacy policy checkbox

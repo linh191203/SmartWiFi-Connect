@@ -116,4 +116,30 @@ class WifiOcrTextParserTest {
         assertEquals("CAFE MOC", result.ssid)
         assertEquals("Cf222222", result.password)
     }
+
+    @Test
+    fun extractWifiCredentials_stripsRepeatedSsidPrefixFromPassword() {
+        val result = WifiOcrTextParser.extractWifiCredentials(
+            """
+            WiFi: IP OF SON
+            Password: IPOFSON:123456789
+            """.trimIndent(),
+        )
+
+        assertEquals("IP OF SON", result.ssid)
+        assertEquals("123456789", result.password)
+    }
+
+    @Test
+    fun extractWifiCredentials_cleansNoisySsidAndEmbeddedMkPassword() {
+        val result = WifiOcrTextParser.extractWifiCredentials(
+            """
+            D: JUN JUN QUA
+            :JUNJUNQUA:MK:123456789
+            """.trimIndent(),
+        )
+
+        assertEquals("JUN JUN QUA", result.ssid)
+        assertEquals("123456789", result.password)
+    }
 }

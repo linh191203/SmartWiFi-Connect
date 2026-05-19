@@ -6,9 +6,12 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -62,16 +65,111 @@ class MainViewModel @JvmOverloads constructor(
         deps?.repository ?: DefaultWifiRepository(application.applicationContext)
     private val ocrProcessor: WifiOcrEngine = deps?.ocrProcessor ?: WifiOcrProcessor()
     private val ocrDispatcher: CoroutineDispatcher = deps?.ocrDispatcher ?: Dispatchers.Default
-    private val wifiConnector = WifiConnector(application.applicationContext)
+    // Use the application-scoped WifiConnector so the WiFi stays connected
+    // even after the ViewModel is cleared (e.g. user navigates away from
+    // OCR screen or rotates the device). The connector is released only
+    // when the app process dies or user explicitly disconnects.
+    private val wifiConnector = SmartWifiApp.getWifiConnector(application)
     private val _state = MutableStateFlow(MainUiState())
     val state: StateFlow<MainUiState> = _state.asStateFlow()
     private var ocrJob: Job? = null
     private var cachedNearbyNetworks: List<NearbyNetwork> = emptyList()
     private var lastWifiScanMillis: Long = 0L
 
+    /**
+     * Monotonic ID for the most recent connect attempt the user initiated.
+     * Each call to [connectToParsedWifi] increments this. Coroutines belonging
+     * to older attempts must check `attemptId == currentAttemptId` before
+     * touching `_state` so a stale callback for WiFi A cannot overwrite the
+     * UI for the user's newer WiFi B request.
+     */
+    @Volatile private var currentAttemptId: Long = 0L
+
+    /**
+     * Active connect job, kept so a new connect call can cancel the previous
+     * coroutine immediately. Cancelling propagates cooperatively into the
+     * suspending wait inside [WifiConnector.connect].
+     */
+    private var connectJob: Job? = null
+    private var activeConnectRequest: WifiConnectRequestKey? = null
+
+    companion object {
+        private const val TAG = "MainViewModel_WiFi"
+        // Outer guard. WifiConnector itself caps at ~25-30s; this is just a
+        // belt-and-braces ceiling for the coroutine. Generous so we never
+        // pre-empt a real connection that just lands slowly on the OS side.
+        private const val WIFI_CONNECT_TIMEOUT_MS = 45_000L
+        // Grace window for one final SSID re-check after WifiConnector returns
+        // Failed. Connector itself uses event-driven NetworkCallback so the
+        // happy path is instant. The grace mostly covers:
+        //   - User tapping the system Wi-Fi panel a few seconds after we
+        //     opened it (callback fires while we're already in the grace).
+        //   - OEMs that deliver onCapabilitiesChanged after the request slot
+        //     was already released.
+        private const val WIFI_POST_TIMEOUT_ASSOCIATION_GRACE_MS = 12_000L
+        // Hotspots and tethered Wi-Fi often need a couple extra seconds before
+        // Android updates WifiManager/validation state, even though the user
+        // can already use the network. Give them a short grace window before
+        // showing a "no internet" warning.
+        private const val WIFI_CONNECTED_WITHOUT_INTERNET_GRACE_MS = 3_500L
+    }
+
     init {
         loadLatestSavedWifi()
         refreshHistory()
+        startLiveSsidWatcher()
+    }
+
+    /**
+     * Polls the actual SSID the device is associated with at the OS level
+     * (via WifiManager.connectionInfo) and pushes it into [MainUiState.liveConnectedSsid]
+     * so the Home screen "Đang kết nối tới ..." reflects reality, not just
+     * the in-app connection state. Also reacts to default-network changes
+     * via ConnectivityManager for instant updates when the user toggles WiFi
+     * or switches networks outside the app.
+     */
+    private fun startLiveSsidWatcher() {
+        // Initial snapshot
+        refreshLiveConnectedSsid()
+
+        // Poll loop — 2s cadence is enough for "Home" badge UX without
+        // burning battery. WifiManager.connectionInfo is cheap (~µs).
+        viewModelScope.launch {
+            while (true) {
+                delay(2_000L)
+                refreshLiveConnectedSsid()
+            }
+        }
+
+        // Listen for default network changes for instant updates when user
+        // turns WiFi on/off or switches networks via system settings.
+        runCatching {
+            val cm = getApplication<Application>()
+                .getSystemService(ConnectivityManager::class.java) ?: return@runCatching
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) = refreshLiveConnectedSsid()
+                override fun onLost(network: android.net.Network) = refreshLiveConnectedSsid()
+                override fun onCapabilitiesChanged(
+                    network: android.net.Network,
+                    networkCapabilities: NetworkCapabilities,
+                ) = refreshLiveConnectedSsid()
+            })
+        }
+    }
+
+    private fun refreshLiveConnectedSsid() {
+        // Priority: actual OS-level SSID > app's keep-alive SSID.
+        // On Vivo, WifiManager.connectionInfo may still report the OLD system-
+        // level WiFi while the Specifier-bound network (app-bound) is actually
+        // connected to the NEW WiFi. In that case, use the keep-alive SSID
+        // which reflects what the app successfully connected to.
+        val osSsid = wifiConnector.getActualConnectedSsid()
+        val keepAlive = wifiConnector.getKeptAliveSsid()
+        val live = osSsid ?: keepAlive
+        val current = _state.value.liveConnectedSsid
+        if (live != current) {
+            _state.update { it.copy(liveConnectedSsid = live) }
+        }
     }
 
     fun onDarkModeChanged(enabled: Boolean) {
@@ -84,14 +182,41 @@ class MainViewModel @JvmOverloads constructor(
 
     fun clearAllHistory() {
         viewModelScope.launch {
+            // Snapshot SSIDs BEFORE wiping the DB so we can per-SSID forget
+            // suggestions and only disconnect the WiFi if it is among the
+            // cleared records. This preserves the rule "delete must not
+            // disconnect a WiFi that is not the one being deleted".
+            val ssidsBeingDeleted = runCatching { repository.getSavedWifiHistory() }
+                .getOrDefault(emptyList())
+                .map { it.ssid }
+                .filter { it.isNotBlank() }
+                .distinct()
+
             runCatching {
                 repository.clearSavedWifiHistory()
             }.onSuccess { deletedCount ->
+                // Per-SSID forget: removes the WifiNetworkSuggestion for each
+                // saved SSID. forgetNetwork() internally only calls
+                // releaseAll() when the current keep-alive SSID matches —
+                // so the active WiFi connection is preserved as long as the
+                // user is not connected to one of the deleted SSIDs.
+                ssidsBeingDeleted.forEach { ssid ->
+                    runCatching { wifiConnector.forgetNetwork(ssid) }
+                }
                 _state.update {
                     it.copy(
                         historyRecords = emptyList(),
                         selectedNetworkDetail = null,
                         selectedNetworkTelemetry = null,
+                        // Only flip wifiConnectionState back to Idle when the
+                        // current connection was actually severed by one of
+                        // the forgetNetwork() calls above. Otherwise leave it
+                        // alone so the UI keeps showing "Connected".
+                        wifiConnectionState = if (wifiConnector.getKeptAliveSsid() == null) {
+                            WifiConnectionState.Idle
+                        } else {
+                            it.wifiConnectionState
+                        },
                         statusMessage = if (deletedCount > 0) {
                             "Đã xóa $deletedCount mục lịch sử kết nối."
                         } else {
@@ -115,7 +240,7 @@ class MainViewModel @JvmOverloads constructor(
             .firstOrNull { it.ssid.equals(network.name, ignoreCase = true) }
         val detail = savedRecord?.toNetworkDetailUiModel(
             origin = NetworkDetailOrigin.HOME,
-            isConnected = isCurrentNetworkConnected(network.name) || network.isConnected,
+            isConnected = isCurrentNetworkInternetValidated(network.name) || network.isConnected,
             scannedNetwork = scannedNetwork,
         ) ?: network.toNetworkDetailUiModel(
             origin = NetworkDetailOrigin.HOME,
@@ -138,7 +263,7 @@ class MainViewModel @JvmOverloads constructor(
             it.copy(
                 selectedNetworkDetail = record.toNetworkDetailUiModel(
                     origin = NetworkDetailOrigin.HISTORY,
-                    isConnected = isCurrentNetworkConnected(record.ssid),
+                    isConnected = isCurrentNetworkInternetValidated(record.ssid),
                     scannedNetwork = scannedNetwork,
                 ),
                 selectedNetworkTelemetry = null,
@@ -172,7 +297,7 @@ class MainViewModel @JvmOverloads constructor(
             val latestDetail = current.selectedNetworkDetail ?: return@update current
             current.copy(
                 selectedNetworkDetail = latestDetail.copy(
-                    isConnected = telemetry != null || isCurrentNetworkConnected(latestDetail.ssid),
+                    isConnected = isCurrentNetworkInternetValidated(latestDetail.ssid),
                 ),
                 selectedNetworkTelemetry = telemetry,
             )
@@ -196,22 +321,55 @@ class MainViewModel @JvmOverloads constructor(
         val detail = _state.value.selectedNetworkDetail ?: return
         val recordId = detail.savedRecordId ?: return
         viewModelScope.launch {
+            // Determine BEFORE deletion whether the SSID being deleted is the
+            // one the device is currently using. We must NOT disconnect or
+            // touch any other WiFi the user is actively connected to.
+            val keepAliveSsid = wifiConnector.getKeptAliveSsid()
+            val osLevelSsid = wifiConnector.getActualConnectedSsid()
+            val isDeletingActiveWifi = listOfNotNull(keepAliveSsid, osLevelSsid).any { active ->
+                active.equals(detail.ssid, ignoreCase = true)
+            }
+
             val deleted = runCatching {
                 repository.deleteSavedWifiRecord(recordId)
             }.getOrDefault(false)
-            if (deleted) {
-                _state.update {
-                    it.copy(
-                        historyRecords = it.historyRecords.filterNot { record -> record.id == recordId },
-                        selectedNetworkDetail = null,
-                        selectedNetworkTelemetry = null,
-                        statusMessage = "Đã xóa mạng '${detail.ssid}' khỏi lịch sử.",
-                    )
-                }
-            } else {
+            if (!deleted) {
                 _state.update {
                     it.copy(statusMessage = "Chưa xóa được mạng '${detail.ssid}'.")
                 }
+                return@launch
+            }
+
+            // forgetNetwork() is per-SSID safe: it only releases the active
+            // callback / keep-alive when the active SSID equals the one being
+            // forgotten. Suggestions are removed strictly for this SSID,
+            // so any other saved WiFi is untouched.
+            wifiConnector.forgetNetwork(detail.ssid)
+
+            _state.update { state ->
+                state.copy(
+                    historyRecords = state.historyRecords.filterNot { record -> record.id == recordId },
+                    selectedNetworkDetail = null,
+                    selectedNetworkTelemetry = null,
+                    // Only reset to Idle if the deleted WiFi was the active
+                    // one. Otherwise leave the existing Connected state alone
+                    // so the UI keeps reflecting the live connection.
+                    wifiConnectionState = if (isDeletingActiveWifi) {
+                        WifiConnectionState.Idle
+                    } else {
+                        state.wifiConnectionState
+                    },
+                    statusMessage = if (isDeletingActiveWifi) {
+                        "Đã xóa '${detail.ssid}'. Mạng đang dùng có thể bị ngắt — hãy chọn Wi-Fi khác nếu cần."
+                    } else {
+                        "Đã xóa mạng '${detail.ssid}' khỏi lịch sử. Wi-Fi đang dùng vẫn được giữ nguyên."
+                    },
+                    transientUserMessage = if (isDeletingActiveWifi) {
+                        "Đã xóa Wi-Fi đang dùng '${detail.ssid}'. Có thể mất kết nối."
+                    } else {
+                        state.transientUserMessage
+                    },
+                )
             }
         }
     }
@@ -259,6 +417,38 @@ class MainViewModel @JvmOverloads constructor(
         val requestedSsid = current.ssid.trim()
         val password = current.password.trim().takeIf { it.isNotEmpty() }
         val security = current.security.trim().takeIf { it.isNotEmpty() }
+        val requestKey = WifiConnectRequestKey.from(
+            ssid = requestedSsid,
+            password = password,
+            security = security,
+        )
+
+        if (connectJob?.isActive == true && activeConnectRequest == requestKey) {
+            Log.d(TAG, "▶ Duplicate connect request for '$requestedSsid' ignored — existing request is still active")
+            return
+        }
+
+        // ── Allocate a fresh attemptId. Every coroutine forked from this
+        //    call captures `myAttempt` and uses applyIfCurrent() before
+        //    mutating _state — so a stale callback from WiFi A can NEVER
+        //    overwrite the UI for the user's newer WiFi B attempt. ──
+        val myAttempt = ++currentAttemptId
+        val priorActiveSsid = wifiConnector.getActualConnectedSsid()
+        val priorKeepAlive = wifiConnector.getKeptAliveSsid()
+
+        // ── DEBUG: Log connection request from UI ──
+        Log.d(TAG, "════════════════════════════════════════════════════════════")
+        Log.d(TAG, "▶ connectToParsedWifi() CALLED — attemptId=$myAttempt")
+        Log.d(TAG, "  Current SSID:    '$priorActiveSsid' (OS-level)")
+        Log.d(TAG, "  Keep-alive SSID: '$priorKeepAlive'")
+        Log.d(TAG, "  Target SSID:     '$requestedSsid'")
+        Log.d(TAG, "  Password length: ${password?.length ?: 0}")
+        Log.d(TAG, "  Security:        '${security ?: "<auto>"}'")
+        Log.d(TAG, "  Source format:   '${current.sourceFormat}'")
+        Log.d(TAG, "  Auto-connect:    ${current.autoConnectEnabled}")
+        Log.d(TAG, "  Android version: ${Build.VERSION.SDK_INT}")
+        Log.d(TAG, "  Device:          ${Build.MANUFACTURER} ${Build.MODEL}")
+        Log.d(TAG, "════════════════════════════════════════════════════════════")
 
         if (requestedSsid.isBlank()) {
             val message = if (password != null) {
@@ -324,8 +514,161 @@ class MainViewModel @JvmOverloads constructor(
             return
         }
 
-        viewModelScope.launch {
+        activeConnectRequest = requestKey
+
+        // Cancel only a genuinely different in-flight connect request. A
+        // duplicate tap for the same credentials is ignored above so Android's
+        // system chooser is not canceled while it is still on screen.
+        connectJob?.let { existing ->
+            if (existing.isActive) {
+                Log.d(TAG, "▶ Cancelling prior connectJob (attempt #${myAttempt - 1}) — superseded by attempt #$myAttempt")
+                existing.cancel()
+            }
+        }
+
+        connectJob = viewModelScope.launch {
+            // Coroutine-local guard: a coroutine started for attempt N must
+            // never mutate _state if the user has already started attempt N+1.
+            // This protects the UI from stale callbacks for the previous SSID.
+            val isCurrent: () -> Boolean = { currentAttemptId == myAttempt }
+            val applyIfCurrent: (String, (MainUiState) -> MainUiState) -> Unit = { tag, transform ->
+                if (isCurrent()) {
+                    _state.update(transform)
+                } else {
+                    Log.d(TAG, "  [attempt #$myAttempt] DROPPED state update '$tag' — superseded by attempt #$currentAttemptId")
+                }
+            }
+
+            // Single funnel for "device joined SSID — verify internet then
+            // either flip to Connected or to ConnectedWithoutInternet".
+            // Every escalation path calls this so we never show a premature
+            // green checkmark while Android is still validating.
+            //
+            // Returns true if the funnel committed a final UI state (Connected
+            // or ConnectedWithoutInternet), false if the attempt was
+            // superseded by a newer one and nothing should follow.
+            val finalizeAfterAssociated: suspend (String, String) -> Boolean = label@{ ssid, debugSource ->
+                if (!isCurrent()) {
+                    Log.d(TAG, "  ▸ [attempt #$myAttempt] finalize($debugSource) skipped — superseded")
+                    return@label false
+                }
+
+                Log.d(
+                    TAG,
+                    "  ▸ [attempt #$myAttempt] Verifying Internet ($debugSource) for '$ssid'...",
+                )
+                applyIfCurrent("verifying-internet-$debugSource") {
+                    it.copy(
+                        ssid = ssid,
+                        wifiConnectionState = WifiConnectionState.Connecting(
+                            ssid = ssid,
+                            phase = WifiConnectionPhase.VERIFYING_INTERNET,
+                        ),
+                        statusMessage = "Đã kết nối Wi-Fi '$ssid', đang kiểm tra Internet...",
+                    )
+                }
+
+                val outcome = runCatching {
+                    wifiConnector.checkRealInternetWithRetries(ssid)
+                }.getOrNull()
+
+                if (!isCurrent()) {
+                    Log.d(TAG, "  ▸ [attempt #$myAttempt] finalize($debugSource) post-probe skipped — superseded")
+                    return@label false
+                }
+
+                val ssidNow = wifiConnector.getActualConnectedSsid()
+                val ssidStillMatches = ssidNow != null && ssidNow.equals(ssid, ignoreCase = true)
+                val ssidNotSilentlyChanged = ssidStillMatches || ssidNow == null
+                Log.d(
+                    TAG,
+                    "  ▸ [attempt #$myAttempt] finalize($debugSource): ssidNow='$ssidNow', match=$ssidStillMatches, probe.success=${outcome?.success}, probe.reason='${outcome?.reason}'",
+                )
+
+                if (!ssidNotSilentlyChanged) {
+                    val msg = "Thiết bị đã rời khỏi mạng '$ssid' (hiện đang dùng '$ssidNow'). Vui lòng thử lại."
+                    Log.w(TAG, "  ▸ [attempt #$myAttempt] SSID rolled back during finalize($debugSource)")
+                    applyIfCurrent("ssid-rolled-back-$debugSource") {
+                        it.copy(
+                            wifiConnectionState = WifiConnectionState.Failed(
+                                reason = WifiConnectFailureReason.AUTHENTICATION_OR_UNAVAILABLE,
+                                message = msg,
+                            ),
+                            statusMessage = msg,
+                        )
+                    }
+                    return@label true
+                }
+
+                val saved = runCatching {
+                    repository.saveConnectedNetworkLocal(
+                        baseUrl = current.baseUrl,
+                        ocrText = current.ocrText.ifBlank { "Kết nối từ kết quả OCR" },
+                        ssid = ssid,
+                        password = password,
+                        sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
+                        confidence = current.confidence,
+                    )
+                }.getOrNull()
+                if (saved != null) {
+                    _state.update { state ->
+                        state.copy(
+                            historyRecords = listOf(saved) +
+                                state.historyRecords.filterNot {
+                                    it.id == saved.id ||
+                                        it.ssid.equals(saved.ssid, ignoreCase = true)
+                                },
+                        )
+                    }
+                }
+
+                if (outcome?.success == true) {
+                    val successMessage = if (saved != null) {
+                        "Kết nối Wi-Fi thành công: $ssid. Đã lưu lịch sử trên thiết bị."
+                    } else {
+                        "Kết nối Wi-Fi thành công: $ssid. Chưa lưu được lịch sử, hãy thử lại sau."
+                    }
+                    Log.d(TAG, "  ✓ [attempt #$myAttempt] FINAL SUCCESS for '$ssid' via $debugSource (probe='${outcome.reason}')")
+                    applyIfCurrent("connected-final-$debugSource") {
+                        it.copy(
+                            ssid = ssid,
+                            wifiConnectionState = WifiConnectionState.Connected(ssid = ssid),
+                            statusMessage = successMessage,
+                            transientUserMessage = "Kết nối Wi-Fi thành công.",
+                        )
+                    }
+                } else {
+                    val noInternetMsg =
+                        "Đã kết nối Wi-Fi '$ssid' nhưng chưa xác thực được Internet. Hãy đảm bảo điểm phát có dữ liệu di động/Internet."
+                    Log.w(
+                        TAG,
+                        "  ▸ [attempt #$myAttempt] CONNECTED_NO_INTERNET for '$ssid' via $debugSource — probeReason='${outcome?.reason}'",
+                    )
+                    applyIfCurrent("connected-no-internet-$debugSource") {
+                        it.copy(
+                            ssid = ssid,
+                            wifiConnectionState = WifiConnectionState.ConnectedWithoutInternet(
+                                ssid = ssid,
+                                message = noInternetMsg,
+                                isCaptivePortal = false,
+                            ),
+                            statusMessage = noInternetMsg,
+                            transientUserMessage = noInternetMsg,
+                        )
+                    }
+                }
+                true
+            }
+
             val scannedNearby = getNearbyNetworksOffMain()
+
+            // ── DEBUG: Log scan results used for connection ──
+            Log.d(TAG, "▶ WiFi scan for connection: ${scannedNearby.size} networks")
+            scannedNearby.forEachIndexed { i, net ->
+                val matchIndicator = if (net.ssid.equals(requestedSsid, ignoreCase = true)) " ← EXACT MATCH" else ""
+                Log.d(TAG, "  [$i] '${net.ssid}' RSSI=${net.signalDbm}dBm${matchIndicator}")
+            }
+
             val connectionPlan = resolveWifiConnectionPlan(
                 requestedSsid = requestedSsid,
                 nearbyNetworks = scannedNearby,
@@ -336,7 +679,7 @@ class MainViewModel @JvmOverloads constructor(
                     message = "Cần nhập SSID trước khi kết nối Wi-Fi.",
                 )
                 val uiMessage = failure.message ?: "Dữ liệu kết nối không hợp lệ."
-                _state.update {
+                applyIfCurrent("plan-resolution-failed") {
                     it.copy(
                         wifiConnectionState = WifiConnectionState.Failed(
                             reason = failure.reason,
@@ -348,9 +691,18 @@ class MainViewModel @JvmOverloads constructor(
                 return@launch
             }
 
+            // ── DEBUG: Log connection plan ──
+            Log.d(TAG, "▶ CONNECTION PLAN [attempt #$myAttempt]:")
+            Log.d(TAG, "  Candidate SSIDs: ${connectionPlan.candidateSsids}")
+            Log.d(TAG, "  Missing from scan: ${connectionPlan.directConnectionMissingFromScan}")
+            Log.d(TAG, "  Resolved from fuzzy: ${connectionPlan.resolvedFromFuzzyMatch}")
+            Log.d(TAG, "  Requires user selection: ${connectionPlan.requiresUserSelection}")
+            Log.d(TAG, "  Suggested SSID: ${connectionPlan.suggestedSsid}")
+            Log.d(TAG, "  Suggested score: ${connectionPlan.suggestedScore}")
+
             if (connectionPlan.requiresUserSelection) {
                 val uiMessage = "Tên Wi-Fi từ OCR chưa khớp chắc chắn với danh sách Wi-Fi thật. Hãy chọn đúng SSID trong danh sách xung quanh rồi kết nối."
-                _state.update {
+                applyIfCurrent("requires-user-selection") {
                     it.copy(
                         wifiConnectionState = WifiConnectionState.Failed(
                             reason = WifiConnectFailureReason.INVALID_INPUT,
@@ -374,7 +726,7 @@ class MainViewModel @JvmOverloads constructor(
             var lastFailure: WifiConnectResult.Failed? = null
 
             for ((index, targetSsid) in connectionPlan.candidateSsids.withIndex()) {
-                _state.update {
+                applyIfCurrent("connecting-phase") {
                     it.copy(
                         wifiConnectionState = WifiConnectionState.Connecting(
                             ssid = targetSsid,
@@ -407,7 +759,7 @@ class MainViewModel @JvmOverloads constructor(
                 }
 
                 val result = runCatching {
-                    withTimeout(30_000L) {
+                    withTimeout(WIFI_CONNECT_TIMEOUT_MS) {
                         connectWifi(
                             ssid = targetSsid,
                             password = password,
@@ -430,56 +782,139 @@ class MainViewModel @JvmOverloads constructor(
 
                 when (result) {
                     is WifiConnectResult.Success -> {
-                        val localSavedRecord = runCatching {
-                            repository.saveConnectedNetworkLocal(
-                                baseUrl = current.baseUrl,
-                                ocrText = current.ocrText.ifBlank { "Kết nối từ kết quả OCR" },
-                                ssid = result.ssid,
-                                password = password,
-                                sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
-                                confidence = current.confidence,
-                            )
-                        }.getOrNull()
-
-                        if (localSavedRecord != null) {
-                            _state.update { state ->
-                                state.copy(
-                                    historyRecords = listOf(localSavedRecord) +
-                                        state.historyRecords.filterNot {
-                                            it.id == localSavedRecord.id ||
-                                                it.ssid.equals(localSavedRecord.ssid, ignoreCase = true)
-                                        },
-                                )
-                            }
-                        }
-
-                        _state.update {
-                            it.copy(
-                                ssid = result.ssid,
-                                wifiConnectionState = WifiConnectionState.Connected(ssid = result.ssid),
-                                statusMessage = "Kết nối Wi-Fi thành công: ${result.ssid}. Đang lưu lịch sử...",
-                            )
-                        }
-
-                        val successMessage = when {
-                            localSavedRecord != null ->
-                                "Kết nối Wi-Fi thành công: ${result.ssid}. Đã lưu lịch sử trên thiết bị."
-                            else ->
-                                "Kết nối Wi-Fi thành công: ${result.ssid}. Chưa lưu được lịch sử, hãy thử lại sau."
-                        }
-                        _state.update {
-                            it.copy(
-                                ssid = result.ssid,
-                                statusMessage = successMessage,
-                                transientUserMessage = "Kết nối Wi-Fi thành công.",
-                            )
-                        }
+                        Log.d(TAG, "════════════════════════════════════════════════════════════")
+                        Log.d(
+                            TAG,
+                            "▶ [attempt #$myAttempt] WifiConnector returned Success for '${result.ssid}' — entering finalizeAfterAssociated",
+                        )
+                        Log.d(TAG, "════════════════════════════════════════════════════════════")
+                        finalizeAfterAssociated(result.ssid, "specifier-success")
                         return@launch
                     }
 
                     is WifiConnectResult.ConnectedWithoutInternet -> {
-                        val uiMessage = buildWifiConnectedWithoutInternetMessage(result)
-                        _state.update {
+                        // Double-check the device's REAL associated SSID. The
+                        // "no validated internet" signal often arrives slower
+                        // than association on real devices (esp. Vivo/Xiaomi)
+                        // — by the time we get here, the WiFi is already
+                        // usable. Don't punish the user with a "no internet"
+                        // screen + bounce back to OCR if the device is
+                        // actually on the right WiFi.
+                        val actualSsid = wifiConnector.getActualConnectedSsid()
+                        val deviceIsOnTargetSsid = actualSsid != null &&
+                            actualSsid.equals(result.ssid, ignoreCase = true)
+                        Log.d(
+                            TAG,
+                            "  ConnectedWithoutInternet check: actualSsid='$actualSsid', target='${result.ssid}', match=$deviceIsOnTargetSsid, captive=${result.isCaptivePortal}",
+                        )
+
+                        val joinedAfterGrace =
+                            if (!deviceIsOnTargetSsid && !result.isCaptivePortal && isCurrent()) {
+                                applyIfCurrent("connected-without-internet-grace") {
+                                    it.copy(
+                                        wifiConnectionState = WifiConnectionState.Connecting(
+                                            ssid = result.ssid,
+                                            phase = WifiConnectionPhase.VERIFYING_INTERNET,
+                                        ),
+                                        statusMessage = "Đang chờ Wi-Fi ${result.ssid} hoàn tất xác minh kết nối...",
+                                    )
+                                }
+                                waitForActualConnectedSsid(
+                                    expectedSsid = result.ssid,
+                                    timeoutMillis = WIFI_CONNECTED_WITHOUT_INTERNET_GRACE_MS,
+                                )
+                            } else {
+                                false
+                            }
+                        val deviceJoinedTargetSsid = deviceIsOnTargetSsid || joinedAfterGrace
+
+                        if (deviceIsOnTargetSsid && !result.isCaptivePortal) {
+                            Log.d(TAG, "  ✓ Device IS on target SSID — routing through finalizeAfterAssociated")
+                            finalizeAfterAssociated(result.ssid, "joined-without-internet-immediate")
+                            return@launch
+                        }
+
+                        if (deviceJoinedTargetSsid && !result.isCaptivePortal) {
+                            Log.d(TAG, "  ✓ Device joined '${result.ssid}' during grace — routing through finalizeAfterAssociated")
+                            finalizeAfterAssociated(result.ssid, "joined-without-internet-grace")
+                            return@launch
+                        }
+
+                        // Genuine "joined but no internet" (rare) — show the
+                        // soft warning state, do NOT bounce to OCR.
+                        // FINAL CHECK: real HTTP probe with retries (1s/3s/5s)
+                        // through the bound network. Personal hotspots (iPhone,
+                        // Android) often never get NET_CAPABILITY_VALIDATED
+                        // but DO serve internet after a 2-5s auth handshake.
+                        // Falling straight to "no internet" UI would punish
+                        // the user even though the WiFi is fine.
+                        Log.d(
+                            TAG,
+                            "  ▸ [attempt #$myAttempt] Running internet probe with retries for '${result.ssid}' (target='${result.ssid}', actual='${wifiConnector.getActualConnectedSsid()}')",
+                        )
+                        val httpOutcome = runCatching {
+                            wifiConnector.checkRealInternetWithRetries(result.ssid)
+                        }.getOrNull()
+                        Log.d(
+                            TAG,
+                            "  ▸ Internet probe outcome: success=${httpOutcome?.success} reason='${httpOutcome?.reason}' probedNetwork=${httpOutcome?.probedNetwork} associatedSsid='${httpOutcome?.associatedSsid}'",
+                        )
+                        val httpProbeOk = httpOutcome?.success == true
+                        if (httpProbeOk && !result.isCaptivePortal) {
+                            Log.d(TAG, "  ✓ HTTP probe succeeded — escalating to Success (likely personal hotspot)")
+                            val localSavedRecord = runCatching {
+                                repository.saveConnectedNetworkLocal(
+                                    baseUrl = current.baseUrl,
+                                    ocrText = current.ocrText.ifBlank { "Kết nối từ kết quả OCR" },
+                                    ssid = result.ssid,
+                                    password = password,
+                                    sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
+                                    confidence = current.confidence,
+                                )
+                            }.getOrNull()
+
+                            if (localSavedRecord != null) {
+                                _state.update { state ->
+                                    state.copy(
+                                        historyRecords = listOf(localSavedRecord) +
+                                            state.historyRecords.filterNot {
+                                                it.id == localSavedRecord.id ||
+                                                    it.ssid.equals(localSavedRecord.ssid, ignoreCase = true)
+                                            },
+                                    )
+                                }
+                            }
+
+                            applyIfCurrent("http-probe-success") {
+                                it.copy(
+                                    ssid = result.ssid,
+                                    wifiConnectionState = WifiConnectionState.Connected(ssid = result.ssid),
+                                    statusMessage = "Kết nối Wi-Fi thành công: ${result.ssid}.",
+                                    transientUserMessage = "Kết nối Wi-Fi thành công.",
+                                )
+                            }
+                            return@launch
+                        }
+
+                        // Probe failed but the device IS on the target SSID:
+                        // emit the friendlier "WiFi joined, internet auth not
+                        // confirmed yet" state instead of a hard failure.
+                        // Specifically required by the hotspot-internet-auth
+                        // flow: we never want to show "Fail" when WifiManager
+                        // confirms the requested SSID is the live SSID.
+                        val nowSsid = wifiConnector.getActualConnectedSsid()
+                        val ssidActuallyMatches = nowSsid != null &&
+                            nowSsid.equals(result.ssid, ignoreCase = true)
+                        val uiMessage = if (ssidActuallyMatches) {
+                            "Đã kết nối Wi-Fi '${result.ssid}' nhưng chưa xác thực được Internet. Kiểm tra hotspot/router rồi thử lại."
+                        } else {
+                            buildWifiConnectedWithoutInternetMessage(result)
+                        }
+                        Log.d(
+                            TAG,
+                            "  ▸ [attempt #$myAttempt] CONNECTED_NO_INTERNET for '${result.ssid}' — ssidActuallyMatches=$ssidActuallyMatches, finalUi='$uiMessage'",
+                        )
+                        applyIfCurrent("connected-no-internet") {
                             it.copy(
                                 ssid = result.ssid,
                                 wifiConnectionState = WifiConnectionState.ConnectedWithoutInternet(
@@ -495,17 +930,83 @@ class MainViewModel @JvmOverloads constructor(
                     }
 
                     is WifiConnectResult.Failed -> {
+                        // Soft-failure grace: the OS may still be in the
+                        // middle of switching to the target WiFi when the
+                        // connector gives up. Re-poll getActualConnectedSsid()
+                        // for WIFI_POST_TIMEOUT_ASSOCIATION_GRACE_MS before
+                        // committing to a UI failure. Only "hard" failures
+                        // (permissions, invalid input, unsupported device)
+                        // bypass this grace.
+                        val isSoftFailure = when (result.reason) {
+                            WifiConnectFailureReason.TIMEOUT,
+                            WifiConnectFailureReason.WRONG_PASSWORD_OR_REJECTED,
+                            WifiConnectFailureReason.AUTHENTICATION_OR_UNAVAILABLE,
+                            WifiConnectFailureReason.SSID_NOT_FOUND,
+                            WifiConnectFailureReason.NETWORK_NOT_FOUND,
+                            WifiConnectFailureReason.UNKNOWN -> true
+                            else -> false
+                        }
+                        if (isSoftFailure) {
+                            applyIfCurrent("verifying-internet") {
+                                it.copy(
+                                    wifiConnectionState = WifiConnectionState.Connecting(
+                                        ssid = targetSsid,
+                                        phase = WifiConnectionPhase.VERIFYING_INTERNET,
+                                    ),
+                                    statusMessage = "Đang chờ thiết bị hoàn tất chuyển sang Wi-Fi $targetSsid...",
+                                )
+                            }
+                            // If the user already started a newer attempt for
+                            // a different SSID, abort this stale wait — the
+                            // newer connect coroutine is in charge of the UI.
+                            if (!isCurrent()) {
+                                Log.d(TAG, "  ▸ [attempt #$myAttempt] aborting grace wait — superseded by attempt #$currentAttemptId")
+                                return@launch
+                            }
+                            val deviceJoinedAfterTimeout = waitForActualConnectedSsid(
+                                expectedSsid = targetSsid,
+                                timeoutMillis = WIFI_POST_TIMEOUT_ASSOCIATION_GRACE_MS,
+                            )
+                            Log.d(
+                                TAG,
+                                "  Soft-failure grace check [attempt #$myAttempt]: reason=${result.reason}, target='$targetSsid', joinedAfterGrace=$deviceJoinedAfterTimeout",
+                            )
+                            if (deviceJoinedAfterTimeout) {
+                                Log.d(TAG, "  ✓ Device joined '$targetSsid' during grace — routing through finalizeAfterAssociated")
+                                finalizeAfterAssociated(targetSsid, "soft-failure-grace")
+                                return@launch
+                            }
+                        }
+
                         if (
                             result.reason == WifiConnectFailureReason.NO_INTERNET ||
                             result.reason == WifiConnectFailureReason.CAPTIVE_PORTAL
                         ) {
+                            // Same escalation logic for Failed-NO_INTERNET:
+                            // if the device truly is on the target WiFi, treat
+                            // as Success rather than bouncing to OCR.
+                            val actualSsid = wifiConnector.getActualConnectedSsid()
+                            val deviceIsOnTargetSsid = actualSsid != null &&
+                                actualSsid.equals(targetSsid, ignoreCase = true)
+                            val isCaptive = result.reason == WifiConnectFailureReason.CAPTIVE_PORTAL
+                            Log.d(
+                                TAG,
+                                "  Failed.NO_INTERNET/CAPTIVE check: actualSsid='$actualSsid', target='$targetSsid', match=$deviceIsOnTargetSsid, captive=$isCaptive",
+                            )
+
+                            if (deviceIsOnTargetSsid && !isCaptive) {
+                                Log.d(TAG, "  ✓ Device IS on target SSID — routing through finalizeAfterAssociated")
+                                finalizeAfterAssociated(targetSsid, "no-internet-escalation")
+                                return@launch
+                            }
+
                             val joinedResult = WifiConnectResult.ConnectedWithoutInternet(
                                 ssid = targetSsid,
                                 hasInternetCapability = result.reason == WifiConnectFailureReason.CAPTIVE_PORTAL,
                                 isCaptivePortal = result.reason == WifiConnectFailureReason.CAPTIVE_PORTAL,
                             )
                             val uiMessage = buildWifiConnectedWithoutInternetMessage(joinedResult)
-                            _state.update {
+                            applyIfCurrent("connected-no-internet-final") {
                                 it.copy(
                                     ssid = targetSsid,
                                     wifiConnectionState = WifiConnectionState.ConnectedWithoutInternet(
@@ -535,7 +1036,111 @@ class MainViewModel @JvmOverloads constructor(
                 result = failure,
                 plan = connectionPlan,
             )
-            _state.update {
+
+            // If we still have a kept-alive WiFi (the user was already
+            // connected to another network before this attempt), do NOT flip
+            // UI into a hard "Failed" state — that bounces them to the OCR
+            // screen and looks like everything broke. Instead keep the
+            // existing connection visible and surface the failure as a
+            // transient toast, so the user can retry without losing their
+            // current internet.
+            val stillConnectedSsid = wifiConnector.getKeptAliveSsid()
+            if (stillConnectedSsid != null) {
+                Log.d(TAG, "  ▸ [attempt #$myAttempt] Connect to '$requestedSsid' failed but user is still on '$stillConnectedSsid' — keeping Connected state")
+                applyIfCurrent("fallback-still-connected") {
+                    it.copy(
+                        ssid = stillConnectedSsid,
+                        wifiConnectionState = WifiConnectionState.Connected(ssid = stillConnectedSsid),
+                        statusMessage = "Vẫn đang dùng Wi-Fi '$stillConnectedSsid'. $uiMessage",
+                        transientUserMessage = uiMessage,
+                    )
+                }
+                return@launch
+            }
+
+            // Final terminal Failed flip. We re-check `isCurrent()` here so a
+            // stale failure for WiFi A cannot overwrite the in-flight UI for
+            // the user's newer WiFi B attempt.
+            //
+            // CRITICAL last-mile check (per hotspot-internet-auth requirement):
+            // if WifiManager confirms device IS on the target SSID right now,
+            // we MUST NOT show a hard "Fail". Instead probe internet with
+            // retries 1s/3s/5s. The result is either Success or
+            // ConnectedWithoutInternet — never Failed.
+            val terminalActualSsid = wifiConnector.getActualConnectedSsid()
+            val terminalSsidMatches = terminalActualSsid != null &&
+                terminalActualSsid.equals(requestedSsid, ignoreCase = true)
+            if (terminalSsidMatches) {
+                Log.d(
+                    TAG,
+                    "  ▸ [attempt #$myAttempt] Connector reported Failed but device IS on target '$requestedSsid' — running internet retry probe",
+                )
+                val terminalProbe = runCatching {
+                    wifiConnector.checkRealInternetWithRetries(requestedSsid)
+                }.getOrNull()
+                Log.d(
+                    TAG,
+                    "  ▸ Terminal probe outcome: success=${terminalProbe?.success} reason='${terminalProbe?.reason}' net=${terminalProbe?.probedNetwork} ssid='${terminalProbe?.associatedSsid}'",
+                )
+                if (terminalProbe?.success == true) {
+                    Log.d(TAG, "  ✓ [attempt #$myAttempt] Terminal probe SUCCESS — escalating to Connected for '$requestedSsid'")
+                    val localSavedRecord = runCatching {
+                        repository.saveConnectedNetworkLocal(
+                            baseUrl = current.baseUrl,
+                            ocrText = current.ocrText.ifBlank { "Kết nối từ kết quả OCR" },
+                            ssid = requestedSsid,
+                            password = password,
+                            sourceFormat = current.sourceFormat.takeIf { it.isNotBlank() },
+                            confidence = current.confidence,
+                        )
+                    }.getOrNull()
+                    if (localSavedRecord != null) {
+                        _state.update { state ->
+                            state.copy(
+                                historyRecords = listOf(localSavedRecord) +
+                                    state.historyRecords.filterNot {
+                                        it.id == localSavedRecord.id ||
+                                            it.ssid.equals(localSavedRecord.ssid, ignoreCase = true)
+                                    },
+                            )
+                        }
+                    }
+                    applyIfCurrent("terminal-probe-success") {
+                        it.copy(
+                            ssid = requestedSsid,
+                            wifiConnectionState = WifiConnectionState.Connected(ssid = requestedSsid),
+                            statusMessage = "Kết nối Wi-Fi thành công: $requestedSsid.",
+                            transientUserMessage = "Kết nối Wi-Fi thành công.",
+                        )
+                    }
+                    return@launch
+                }
+                // SSID matches but probe failed — show the precise hotspot
+                // message instead of a generic Fail. Per requirement: never
+                // return "Fail" while currentSSID equals the selected SSID.
+                val noInternetMessage =
+                    "Đã kết nối Wi-Fi '$requestedSsid' nhưng chưa xác thực được Internet. Kiểm tra hotspot/router rồi thử lại."
+                Log.w(
+                    TAG,
+                    "  ▸ [attempt #$myAttempt] SSID matches but internet probe failed — show ConnectedWithoutInternet (reason='${terminalProbe?.reason}')",
+                )
+                applyIfCurrent("terminal-probe-no-internet") {
+                    it.copy(
+                        ssid = requestedSsid,
+                        wifiConnectionState = WifiConnectionState.ConnectedWithoutInternet(
+                            ssid = requestedSsid,
+                            message = noInternetMessage,
+                            isCaptivePortal = false,
+                        ),
+                        statusMessage = noInternetMessage,
+                        transientUserMessage = noInternetMessage,
+                    )
+                }
+                return@launch
+            }
+
+            Log.d(TAG, "  ▸ [attempt #$myAttempt] Final FAILURE for '$requestedSsid' — reason=${failure.reason}, msg='$uiMessage'")
+            applyIfCurrent("final-failed") {
                 it.copy(
                     wifiConnectionState = WifiConnectionState.Failed(
                         reason = failure.reason,
@@ -543,6 +1148,11 @@ class MainViewModel @JvmOverloads constructor(
                     ),
                     statusMessage = uiMessage,
                 )
+            }
+        }
+        connectJob?.invokeOnCompletion {
+            if (currentAttemptId == myAttempt && activeConnectRequest == requestKey) {
+                activeConnectRequest = null
             }
         }
     }
@@ -638,6 +1248,26 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
+    private suspend fun waitForActualConnectedSsid(
+        expectedSsid: String,
+        timeoutMillis: Long,
+    ): Boolean {
+        // 200ms cadence — fast enough that "device on target SSID" is detected
+        // within ~200ms of the OS association, which is the same instant the
+        // status-bar WiFi icon appears.
+        val intervalMillis = 200L
+        val attempts = (timeoutMillis / intervalMillis).coerceAtLeast(1L).toInt()
+        repeat(attempts) {
+            val actualSsid = wifiConnector.getActualConnectedSsid()
+            if (actualSsid != null && actualSsid.equals(expectedSsid, ignoreCase = true)) {
+                return true
+            }
+            delay(intervalMillis)
+        }
+        val actualSsid = wifiConnector.getActualConnectedSsid()
+        return actualSsid != null && actualSsid.equals(expectedSsid, ignoreCase = true)
+    }
+
     private fun buildWifiConnectFailureMessage(
         result: WifiConnectResult.Failed,
         plan: WifiConnectionPlan,
@@ -658,7 +1288,7 @@ class MainViewModel @JvmOverloads constructor(
             WifiConnectFailureReason.NETWORK_NOT_FOUND ->
                 "Không tìm thấy mạng Wi-Fi này trong khu vực."
             WifiConnectFailureReason.WRONG_PASSWORD_OR_REJECTED ->
-                "Không thể kết nối. Vui lòng kiểm tra lại mật khẩu."
+                "Không thể kết nối. Hãy kiểm tra mật khẩu hoặc bấm 'Kết nối' trên dialog xác nhận Wi-Fi của hệ thống."
             WifiConnectFailureReason.AUTHENTICATION_OR_UNAVAILABLE ->
                 "Không thể kết nối Wi-Fi. Vui lòng kiểm tra lại tên mạng hoặc mật khẩu."
             WifiConnectFailureReason.NO_INTERNET ->
@@ -856,6 +1486,20 @@ class MainViewModel @JvmOverloads constructor(
 
         val parsedSsid = resolved.parsed.ssid.orEmpty()
         val parsedPassword = resolved.parsed.password.orEmpty()
+
+        // ── DEBUG: Log OCR final credentials ──
+        Log.d(TAG, "════════════════════════════════════════════════════════════")
+        Log.d(TAG, "▶ OCR CREDENTIALS RESOLVED")
+        Log.d(TAG, "  SSID (raw from OCR): '${resolved.parsed.ssid}'")
+        Log.d(TAG, "  SSID (after trim/normalize): '$parsedSsid'")
+        Log.d(TAG, "  Password (length): ${parsedPassword.length}")
+        Log.d(TAG, "  Password (masked): ${if (parsedPassword.isNotEmpty()) "${parsedPassword.first()}${"*".repeat((parsedPassword.length - 2).coerceAtLeast(0))}${parsedPassword.lastOrNull() ?: ""}" else "<empty>"}")
+        Log.d(TAG, "  Security: '${resolved.parsed.security.orEmpty()}'")
+        Log.d(TAG, "  Source format: '${resolved.parsed.sourceFormat.orEmpty()}'")
+        Log.d(TAG, "  Confidence: ${resolved.parsed.confidence}")
+        Log.d(TAG, "  AI state: ${resolved.aiState}")
+        Log.d(TAG, "════════════════════════════════════════════════════════════")
+
         val nearbyNetworks = if (parsedSsid.isNotBlank() || parsedPassword.isNotBlank()) {
             getScannedNearbyNetworksForOcr()
                 .ifEmpty { getCachedNearbyNetworks() }
@@ -879,22 +1523,37 @@ class MainViewModel @JvmOverloads constructor(
                 score = null,
             )
         }
+        val fuzzyAutoMatch = fuzzyResolution.bestMatch?.takeIf {
+            (fuzzyResolution.score ?: 0.0) >= autoApplyFuzzySsidThreshold
+        }
+        val resolvedNearbySsid = exactNearbySsid ?: fuzzyAutoMatch
+        val resolvedSsid = resolvedNearbySsid ?: parsedSsid
+        val resolvedSuggestionState = if (resolvedNearbySsid != null) {
+            SsidSuggestionState.Hidden
+        } else {
+            fuzzyResolution.state
+        }
+        val resolvedStatusMessage = if (exactNearbySsid == null && fuzzyAutoMatch != null) {
+            "Đã khớp tên Wi-Fi từ OCR với '$fuzzyAutoMatch'. Hãy kiểm tra mật khẩu rồi bấm Kết nối."
+        } else {
+            resolved.message
+        }
 
         _state.update {
             it.copy(
                 isLoading = false,
-                ssid = exactNearbySsid ?: parsedSsid,
+                ssid = resolvedSsid,
                 password = parsedPassword,
                 security = resolved.parsed.security.orEmpty(),
                 sourceFormat = resolved.parsed.sourceFormat.orEmpty(),
                 confidence = resolved.parsed.confidence,
-                statusMessage = resolved.message,
+                statusMessage = resolvedStatusMessage,
                 aiValidation = resolved.aiState,
-                ssidSuggestion = fuzzyResolution.state,
+                ssidSuggestion = resolvedSuggestionState,
                 nearbyNetworks = fuzzyResolution.nearbyNetworks.ifEmpty { nearbyNetworks },
                 nearbyWifiStatus = buildNearbyWifiStatus(fuzzyResolution.nearbyNetworks.ifEmpty { nearbyNetworks }),
                 wifiConnectionState = WifiConnectionState.Idle,
-                isNearbyExpanded = parsedSsid.isBlank() && parsedPassword.isNotBlank(),
+                isNearbyExpanded = resolvedSsid.isBlank() && parsedPassword.isNotBlank(),
             )
         }
     }
@@ -1232,17 +1891,29 @@ class MainViewModel @JvmOverloads constructor(
                         score = null,
                     )
                 }
+                val fuzzyAutoMatch = fuzzyResolution.bestMatch?.takeIf {
+                    (fuzzyResolution.score ?: 0.0) >= autoApplyFuzzySsidThreshold
+                }
 
                 _state.update {
                     it.copy(
+                        ssid = fuzzyAutoMatch ?: it.ssid,
                         aiValidation = aiResolution.uiState,
-                        ssidSuggestion = fuzzyResolution.state,
+                        ssidSuggestion = if (fuzzyAutoMatch != null) {
+                            SsidSuggestionState.Hidden
+                        } else {
+                            fuzzyResolution.state
+                        },
                         nearbyNetworks = if (fuzzyResolution.nearbyNetworks.isNotEmpty()) {
                             fuzzyResolution.nearbyNetworks
                         } else {
                             it.nearbyNetworks
                         },
-                        statusMessage = buildParseDoneStatus(aiResolution.uiState),
+                        statusMessage = if (fuzzyAutoMatch != null) {
+                            "Đã khớp tên Wi-Fi từ OCR với '$fuzzyAutoMatch'. Hãy kiểm tra mật khẩu rồi bấm Kết nối."
+                        } else {
+                            buildParseDoneStatus(aiResolution.uiState)
+                        },
                     )
                 }
             } catch (throwable: Throwable) {
@@ -1738,7 +2409,11 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     private fun String.normalizeForFuzzySsid(): String {
-        return java.text.Normalizer.normalize(this, java.text.Normalizer.Form.NFD)
+        val withoutLeadingOcrMarker = replace(
+            "^\\s*[a-z0-9]\\s*[:：]\\s+".toRegex(RegexOption.IGNORE_CASE),
+            "",
+        )
+        return java.text.Normalizer.normalize(withoutLeadingOcrMarker, java.text.Normalizer.Form.NFD)
             .replace("\\p{Mn}+".toRegex(), "")
             .replace('đ', 'd')
             .replace('Đ', 'D')
@@ -1786,7 +2461,7 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun isCurrentNetworkConnected(targetSsid: String): Boolean {
+    private fun isCurrentNetworkInternetValidated(targetSsid: String): Boolean {
         if (targetSsid.isBlank()) return false
         val stateSsid = when (val connectionState = _state.value.wifiConnectionState) {
             is WifiConnectionState.Connected -> connectionState.ssid
@@ -1796,7 +2471,19 @@ class MainViewModel @JvmOverloads constructor(
         if (!stateSsid.isNullOrBlank() && stateSsid.equals(targetSsid, ignoreCase = true)) {
             return true
         }
-        return getCurrentConnectedSsid()?.equals(targetSsid, ignoreCase = true) == true
+        if (getCurrentConnectedSsid()?.equals(targetSsid, ignoreCase = true) != true) return false
+
+        // For UI presence, a Wi-Fi tether/hotspot should still count as the
+        // current connection even if Android has not yet marked it VALIDATED.
+        val app = getApplication<Application>().applicationContext
+        val connectivityManager = app.getSystemService(ConnectivityManager::class.java) ?: return true
+        val activeNetwork = connectivityManager.activeNetwork ?: return true
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return true
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+            (
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) ||
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                )
     }
 
     @Suppress("DEPRECATION")
@@ -1864,6 +2551,7 @@ class MainViewModel @JvmOverloads constructor(
         deps?.scannedNearbyNetworks?.let { return it.invoke() }
         val app = getApplication<Application>().applicationContext
         if (!hasNearbyWifiPermission() || !isWifiEnabled() || !isLocationServiceEnabled() || isRunningOnEmulator()) {
+            Log.d(TAG, "  WiFi scan skipped: permission=${hasNearbyWifiPermission()}, wifiEnabled=${isWifiEnabled()}, locationEnabled=${isLocationServiceEnabled()}, emulator=${isRunningOnEmulator()}")
             cachedNearbyNetworks = emptyList()
             return emptyList()
         }
@@ -1871,6 +2559,7 @@ class MainViewModel @JvmOverloads constructor(
         val wifiManager = app.getSystemService(WifiManager::class.java) ?: return emptyList()
         val now = currentTimeMillis()
         if (!forceRefresh && cachedNearbyNetworks.isNotEmpty() && now - lastWifiScanMillis < wifiScanCacheMillis) {
+            Log.d(TAG, "  WiFi scan: using cache (${cachedNearbyNetworks.size} networks, age=${now - lastWifiScanMillis}ms)")
             return cachedNearbyNetworks
         }
         return runCatching {
@@ -1903,6 +2592,15 @@ class MainViewModel @JvmOverloads constructor(
                 .take(12)
                 .toList()
             cachedNearbyNetworks = networks
+
+            // ── DEBUG: Log scanned WiFi networks ──
+            Log.d(TAG, "════════════════════════════════════════════════════════════")
+            Log.d(TAG, "▶ WIFI SCAN RESULTS (${networks.size} networks found)")
+            networks.forEachIndexed { index, net ->
+                Log.d(TAG, "  [$index] SSID='${net.ssid}', RSSI=${net.signalDbm}dBm, signal=${net.signalLevel}/4, freq=${net.frequencyMhz}MHz, security=${net.securityLabel}, BSSID=${net.bssid}")
+            }
+            Log.d(TAG, "════════════════════════════════════════════════════════════")
+
             networks
         }.getOrDefault(emptyList())
     }
@@ -2010,7 +2708,11 @@ class MainViewModel @JvmOverloads constructor(
 
     override fun onCleared() {
         ocrJob?.cancel()
-        deps?.cancelWifiRequests?.invoke() ?: wifiConnector.cancelPendingRequest()
+        // IMPORTANT: We do NOT call wifiConnector.cancelPendingRequest() here.
+        // The connector lives at Application scope (see SmartWifiApp) so the
+        // kept-alive WiFi connection persists across ViewModel recreation.
+        // Tests that supply deps?.cancelWifiRequests can still clean up.
+        deps?.cancelWifiRequests?.invoke()
         ocrProcessor.release()
         super.onCleared()
     }
@@ -2063,6 +2765,26 @@ private data class WifiConnectionPlan(
     val suggestedSsid: String? = null,
     val suggestedScore: Double? = null,
 )
+
+private data class WifiConnectRequestKey(
+    val ssid: String,
+    val password: String,
+    val security: String,
+) {
+    companion object {
+        fun from(
+            ssid: String,
+            password: String?,
+            security: String?,
+        ): WifiConnectRequestKey {
+            return WifiConnectRequestKey(
+                ssid = ssid.trim().lowercase(Locale.ROOT),
+                password = password.orEmpty(),
+                security = security.orEmpty().trim().lowercase(Locale.ROOT),
+            )
+        }
+    }
+}
 
 enum class NetworkDetailOrigin {
     HOME,
@@ -2123,6 +2845,12 @@ data class MainUiState(
     val selectedNetworkDetail: NetworkDetailUiModel? = null,
     val selectedNetworkTelemetry: NetworkLiveTelemetry? = null,
     val transientUserMessage: String? = null,
+    /**
+     * Realtime SSID currently associated by the device, regardless of whether
+     * the user kicked off the connection from this app or from system settings.
+     * Null = not connected to any WiFi or SSID hidden by OEM (Vivo location-off).
+     */
+    val liveConnectedSsid: String? = null,
 )
 
 sealed class AiValidationState {
@@ -2283,4 +3011,3 @@ private fun Long.toNetworkDetailDate(): String {
 }
 
 private fun String.normalizeWifiSsid(): String = trim().removePrefix("\"").removeSuffix("\"")
-

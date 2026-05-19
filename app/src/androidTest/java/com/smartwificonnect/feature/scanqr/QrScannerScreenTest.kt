@@ -25,7 +25,6 @@ class QrScannerScreenTest {
                 QrScannerScreen(
                     onCloseClick = {},
                     onHelpClick = {},
-                    onFlashClick = {},
                     onGalleryClick = {},
                     onQrCodeDetected = {},
                     onHomeClick = {},
@@ -49,7 +48,6 @@ class QrScannerScreenTest {
                 QrScannerScreen(
                     onCloseClick = { closeClicked = true },
                     onHelpClick = {},
-                    onFlashClick = {},
                     onGalleryClick = {},
                     onQrCodeDetected = {},
                     onHomeClick = {},
@@ -75,7 +73,6 @@ class QrScannerScreenTest {
                 QrScannerScreen(
                     onCloseClick = {},
                     onHelpClick = {},
-                    onFlashClick = {},
                     onGalleryClick = { galleryClicked = true },
                     onQrCodeDetected = {},
                     onHomeClick = {},

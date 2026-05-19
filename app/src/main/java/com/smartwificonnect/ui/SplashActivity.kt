@@ -20,6 +20,11 @@ import kotlinx.coroutines.launch
  */
 @SuppressLint("CustomSplashScreen")
 class SplashActivity : ComponentActivity() {
+    /** See [DisplayScaleGuard]. Clamps font scale to keep the splash on-design. */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(DisplayScaleGuard.wrap(newBase))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {

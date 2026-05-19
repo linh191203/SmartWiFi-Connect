@@ -256,20 +256,14 @@ fun AppNavHost(
         when (mainState.wifiConnectionState) {
             is WifiConnectionState.Failed -> {
                 when {
-                    shouldShowOcrResultAfterConnectionFailure(
-                        currentRoute = currentRoute,
-                        state = mainState,
-                        pendingImageOcrAutoConnect = pendingImageOcrAutoConnect,
-                        hasPendingOcrFailureReview = hasPendingOcrFailureReview,
-                        activeFailureRedirectedToOcrResult = activeFailureRedirectedToOcrResult,
-                    ) -> {
+                    // Auto-connect from OCR failed → go straight to CONNECTION_FAILED
+                    // with "Quét lại" button. No intermediate OCR result screen.
+                    pendingImageOcrAutoConnect && currentRoute in scanTriggerRoutes -> {
                         pendingImageOcrAutoConnect = false
-                        pendingOcrFailureReviewKey = currentOcrFailureReviewKey
-                        activeFailureRedirectedToOcrResult = true
-                        if (currentRoute != Routes.OCR_RESULT) {
-                            navController.navigate(Routes.OCR_RESULT) {
-                                launchSingleTop = true
-                            }
+                        pendingOcrFailureReviewKey = null
+                        activeFailureRedirectedToOcrResult = false
+                        navController.navigate(Routes.CONNECTION_FAILED) {
+                            launchSingleTop = true
                         }
                     }
 
@@ -341,6 +335,17 @@ fun AppNavHost(
                         navController.popBackStack()
                     }
 
+                    // Manual click Connect from OCR_RESULT or REVIEW screens.
+                    // After a real successful connection, take the user back
+                    // to the Home (final) screen instead of stranding them
+                    // on the credential editor.
+                    currentRoute == Routes.OCR_RESULT ||
+                        currentRoute == Routes.REVIEW ||
+                        currentRoute == Routes.MANUAL_ENTRY -> {
+                        pendingImageOcrAutoConnect = false
+                        openHome()
+                    }
+
                     pendingImageOcrAutoConnect -> {
                         pendingImageOcrAutoConnect = false
                     }
@@ -390,7 +395,13 @@ fun AppNavHost(
             currentRoute == Routes.OCR_RESULT &&
             scanResultRouteFor(mainState) == Routes.REVIEW &&
             !hasPendingOcrFailureReview &&
-            !activeFailureRedirectedToOcrResult
+            !activeFailureRedirectedToOcrResult &&
+            // Skip the REVIEW detour entirely when we already have full credentials
+            // AND the SSID is in nearby networks. The user wants the connect sheet
+            // to appear right after OCR — REVIEW would just add an extra screen
+            // (and thus an extra Connect button) on top of OCR_RESULT.
+            !shouldAutoConnectAfterImageScan(mainState) &&
+            !hasFullCredentialsAndNearbyMatch(mainState)
         ) {
             navController.navigate(Routes.REVIEW) {
                 launchSingleTop = true
@@ -744,10 +755,14 @@ internal fun shouldAutoConnectAfterImageScan(state: MainUiState): Boolean {
     val hasExactScannedSsid = state.nearbyNetworks.any { network ->
         network.ssid.equals(state.ssid, ignoreCase = true)
     }
+    // Auto-connect immediately after OCR when we have SSID + password and
+    // the SSID is visible in nearby scan. No intermediate "OCR result" screen.
+    // If connect fails → CONNECTION_FAILED screen with "Quét lại" button.
+    val isOcrSource = state.sourceFormat in imageOcrResultFormats
     return !state.isLoading &&
         state.autoConnectEnabled &&
         hasConnectableCredentials &&
-        state.sourceFormat == "ocr_local_confident" &&
+        isOcrSource &&
         hasExactScannedSsid &&
         state.wifiConnectionState == WifiConnectionState.Idle
 }
@@ -764,6 +779,18 @@ internal fun shouldOpenScanResultAfterImageScan(state: MainUiState): Boolean {
         state.sourceFormat in imageOcrResultFormats &&
         state.wifiConnectionState == WifiConnectionState.Idle &&
         !shouldAutoConnectAfterImageScan(state)
+}
+
+/**
+ * True when the OCR result already has a usable SSID + password and the SSID
+ * is currently visible in the device's nearby network scan. In that case
+ * we skip the REVIEW detour and let the user act on a single connect sheet
+ * (OCR_RESULT) — no duplicate Connect buttons, no extra hop.
+ */
+internal fun hasFullCredentialsAndNearbyMatch(state: MainUiState): Boolean {
+    val hasCreds = state.ssid.isNotBlank() && state.password.isNotBlank()
+    if (!hasCreds) return false
+    return state.nearbyNetworks.any { it.ssid.equals(state.ssid, ignoreCase = true) }
 }
 
 private fun sharedWifiAutoConnectKeyFor(state: MainUiState): String? {
@@ -828,7 +855,16 @@ private fun buildHomeState(mainState: MainUiState, userFullName: String?): HomeU
     val fallback = HomePreviewData.default
     val normalizedName = userFullName?.trim().orEmpty()
     val displayName = normalizedName.ifBlank { "Bạn" }
-    val connectedSsid = (mainState.wifiConnectionState as? WifiConnectionState.Connected)?.ssid
+    // Prefer the REAL device-level SSID over the in-app connection state.
+    // This way the "Đang kết nối tới ..." line reflects what the OS is
+    // actually associated with — even if the user toggled WiFi from the
+    // system settings panel, switched networks outside the app, or the
+    // app-driven connection was released. Fall back to the in-app
+    // Connected state's SSID only when the OS reports nothing (Vivo
+    // location-off masking).
+    val liveSsid = mainState.liveConnectedSsid?.takeIf { it.isNotBlank() }
+    val inAppSsid = (mainState.wifiConnectionState as? WifiConnectionState.Connected)?.ssid
+    val connectedSsid = liveSsid ?: inAppSsid
     val recentFromHistory = mainState.historyRecords
         .filter { it.ssid.isNotBlank() }
         .distinctBy { it.ssid.lowercase(Locale.ROOT) }

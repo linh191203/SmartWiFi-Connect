@@ -8,6 +8,41 @@ internal object WifiOcrTextParser {
         val qrCredentials = parseWifiQrPayload(text)
         if (qrCredentials.hasAnyValue()) return qrCredentials
 
+        // Smart extractor: confidence-driven label detection. We try this
+        // first because it deals with messy real-world OCR (misread labels
+        // like "SIDD", values on the next line, ad/menu noise lines, etc.)
+        // far better than the legacy regex stack below.
+        val smart = SmartWifiOcrExtractor.extract(text)
+        if (smart.ssid.isNotBlank() && smart.password.isNotBlank() && smart.confidence >= 0.40) {
+            return WifiOcrCredentials(
+                ssid = smart.ssid.sanitizeSsidValue(),
+                password = smart.password.sanitizePasswordValue(),
+            )
+        }
+
+        // Fall back to the legacy line-by-line parser (still valuable for
+        // narrowly formatted notes the smart extractor wasn't trained on).
+        // If the smart extractor found ONE field strongly, prefer it over
+        // the legacy result for that field — partial wins still help.
+        val legacy = legacyExtract(text)
+        val mergedSsid = if (smart.ssid.isNotBlank() && smart.ssidConfidence >= 0.45) {
+            smart.ssid.sanitizeSsidValue()
+        } else {
+            legacy.ssid
+        }
+        val mergedPassword = if (smart.password.isNotBlank() && smart.passwordConfidence >= 0.45) {
+            smart.password.sanitizePasswordValue()
+        } else {
+            legacy.password
+        }
+        return WifiOcrCredentials(
+            ssid = mergedSsid,
+            password = if (mergedSsid.isLikelySameCredentialAs(mergedPassword)) "" else mergedPassword,
+        )
+    }
+
+    private fun legacyExtract(text: String): WifiOcrCredentials {
+
         val lines = text
             .lineSequence()
             .map { it.trim() }
@@ -78,7 +113,9 @@ internal object WifiOcrTextParser {
         }
 
         val cleanedSsid = ssid.sanitizeSsidValue()
-        val cleanedPassword = password.sanitizePasswordValue()
+        val cleanedPassword = password
+            .sanitizePasswordValue()
+            .stripLikelySsidPrefixFromPassword(cleanedSsid)
         return WifiOcrCredentials(
             ssid = cleanedSsid,
             password = if (cleanedSsid.isLikelySameCredentialAs(cleanedPassword)) "" else cleanedPassword,
@@ -173,11 +210,16 @@ internal object WifiOcrTextParser {
             .trim()
             .trim('|')
             .trim()
-        return cleaned.repairLikelySsidPrefix()
+        return cleaned
+            .repairLikelySsidPrefix()
+            .stripLeadingOcrFieldMarker()
+            .normalizeOcrAmbiguousChars(forPassword = false)
     }
 
     private fun String.sanitizePasswordValue(): String {
         val normalized = trimWifiValue()
+            .extractAfterEmbeddedPasswordLabel()
+            .trimStart(' ', ':', '：', '-', '=', '.', '|')
             .replace("^\\s*(?:wifi|wi-fi)\\s*[:ï¼=-]\\s*".toRegex(RegexOption.IGNORE_CASE), "")
             .replace("\\s{2,}".toRegex(), " ")
             .expandRepeatedPasswordPattern()
@@ -186,6 +228,82 @@ internal object WifiOcrTextParser {
             .trim('|')
             .trim()
         return normalized.collapseLikelySplitPassword()
+    }
+
+    /**
+     * Fixes OCR character confusions context-aware. ML Kit (and most engines)
+     * frequently misread between visually-similar glyphs:
+     *   '0' <-> 'O' / 'o' / 'Q' / 'D'
+     *   '1' <-> 'l' / 'I' / '|'
+     *   '5' <-> 'S' / 's'
+     *   '8' <-> 'B'
+     *   '2' <-> 'Z' / 'z'
+     *   '6' <-> 'G' / 'b'
+     *   '9' <-> 'g' / 'q'
+     *   'O' <-> 'O-circumflex' (Vietnamese diacritic kept by accident)
+     *
+     * Strategy: classify the value as DIGIT-DOMINANT (>=75% digits) or
+     * LETTER-DOMINANT (>=85% letters). Only fix obvious mistakes inside the
+     * dominant class; mixed-class strings (typical strong passwords) are
+     * left alone to avoid corrupting valid characters.
+     */
+    private fun String.normalizeOcrAmbiguousChars(forPassword: Boolean): String {
+        val value = this
+        if (value.isBlank()) return value
+
+        if (!forPassword) {
+            return value.replace('|', 'l')
+        }
+
+        // Drop accidental Vietnamese accents that survived (Ơ -> O, Ư -> U, ...).
+        // Stripping diacritics is safe for Wi-Fi passphrases because WPA/WPA2
+        // passphrases are ASCII-printable.
+        val asciiFolded = Normalizer.normalize(value, Normalizer.Form.NFD)
+            .replace("\\p{Mn}+".toRegex(), "")
+            .replace('đ', 'd')
+            .replace('Đ', 'D')
+
+        val alnum = asciiFolded.filter { it.isLetterOrDigit() }
+        if (alnum.length < 4) return asciiFolded
+
+        val digitCount = alnum.count(Char::isDigit)
+        val letterCount = alnum.count(Char::isLetter)
+        val total = digitCount + letterCount
+        val digitRatio = digitCount.toDouble() / total
+        val letterRatio = letterCount.toDouble() / total
+
+        val digitDominant = digitRatio >= 0.75
+        val letterDominant = letterRatio >= 0.85
+
+        val normalized = when {
+            digitDominant -> asciiFolded.map { ch ->
+                when (ch) {
+                    'O', 'o', 'Q', 'D' -> '0'
+                    'l', 'I', '|' -> '1'
+                    'Z', 'z' -> '2'
+                    'A' -> '4'
+                    'S', 's' -> '5'
+                    'G', 'b' -> '6'
+                    'T' -> '7'
+                    'B' -> '8'
+                    'g', 'q' -> '9'
+                    else -> ch
+                }
+            }.joinToString("")
+
+            letterDominant && forPassword -> asciiFolded.map { ch ->
+                when (ch) {
+                    '0' -> 'O'
+                    '1' -> 'l'
+                    '5' -> 'S'
+                    else -> ch
+                }
+            }.joinToString("")
+
+            else -> asciiFolded
+        }
+
+        return normalized.normalizeDigitLikePasswordTail()
     }
 
     private fun String.repairLikelySsidPrefix(): String {
@@ -214,6 +332,19 @@ internal object WifiOcrTextParser {
         if (!missingV.isNullOrBlank()) return "Viettel $missingV"
 
         return value
+    }
+
+    private fun String.stripLeadingOcrFieldMarker(): String {
+        val value = trim()
+        if (value.isBlank()) return value
+
+        return leadingOcrFieldMarkerPattern
+            .matchEntire(value)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: value
     }
 
     private fun String.collapseLikelySplitPassword(): String {
@@ -394,6 +525,61 @@ internal object WifiOcrTextParser {
         if (value.contains(':') || value.contains('：')) return false
         if (value.split("\\s+".toRegex()).count { it.isNotBlank() } > 2) return false
         return value.any { it.isLetterOrDigit() }
+    }
+
+    private fun String.normalizeDigitLikePasswordTail(): String {
+        val tailMatch = digitLikePasswordTailPattern.find(this) ?: return this
+        val tail = tailMatch.value
+        if (!tail.any(Char::isDigit)) return this
+
+        val converted = tail.map { ch ->
+            when (ch) {
+                'O', 'o', 'Q', 'D' -> '0'
+                'l', 'I', '|' -> '1'
+                'Z', 'z' -> '2'
+                'A' -> '4'
+                'S', 's' -> '5'
+                'G', 'b' -> '6'
+                'T' -> '7'
+                'B' -> '8'
+                'g', 'q' -> '9'
+                else -> ch
+            }
+        }.joinToString("")
+
+        val digitCount = converted.count(Char::isDigit)
+        if (digitCount < tail.length - 1) return this
+        return replaceRange(tailMatch.range, converted)
+    }
+
+    private fun String.stripLikelySsidPrefixFromPassword(knownSsid: String): String {
+        val value = trimWifiValue()
+            .extractAfterEmbeddedPasswordLabel()
+            .trimStart(' ', ':', '：', '-', '=', '.', '|')
+        if (!value.contains(':') && !value.contains('：')) return value
+
+        val separatorMatch = credentialSeparatorPattern.find(value) ?: return value
+        val prefix = value.substring(0, separatorMatch.range.first).trimWifiValue()
+        val suffix = value.substring(separatorMatch.range.last + 1).sanitizePasswordValue()
+        if (prefix.isBlank() || suffix.isBlank()) return value
+        if (!suffix.looksLikeStrongPasswordCandidate()) return value
+
+        val prefixToken = prefix.compactCredentialToken()
+        val knownSsidToken = knownSsid.compactCredentialToken()
+        val knownSsidMatchesPrefix = knownSsidToken.isNotBlank() && knownSsidToken == prefixToken
+        val prefixLooksLikeCompactedSsid =
+            prefix.length in 4..20 &&
+                prefix.any(Char::isLetter) &&
+                prefix.none(Char::isWhitespace) &&
+                prefix.none { !it.isLetterOrDigit() && it !in setOf('-', '_', '.') } &&
+                prefix.count(Char::isLowerCase) <= 2
+
+        return if (knownSsidMatchesPrefix || prefixLooksLikeCompactedSsid) suffix else value
+    }
+
+    private fun String.extractAfterEmbeddedPasswordLabel(): String {
+        val match = embeddedPasswordLabelPattern.findAll(this).lastOrNull() ?: return this
+        return substring((match.range.last + 1).coerceAtMost(length)).trim()
     }
 
     private fun String.startsWithLikelyLabel(labels: List<String>): Boolean {
@@ -619,6 +805,8 @@ internal object WifiOcrTextParser {
         "ten mang",
         "tên mạng",
         "ssid",
+        // OCR commonly misreads "SSID" as "SIDD" — treat both as the same label.
+        "sidd",
         "id",
         "wifi",
         "wi-fi",
@@ -644,11 +832,11 @@ internal object WifiOcrTextParser {
     )
 
     private val ssidValuePatterns = listOf(
-        Pattern.compile("^\\s*(?:ssid|wifi\\s*name|network\\s*name|wifi\\s*id|name|id|ten\\s*wifi|tên\\s*wifi|ten\\s*mang|t[eê]n\\s*m[aạ]ng|ten\\s*wi-fi|tên\\s*wi-fi)\\s*[:：=-]\\s*(.+)$", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("^\\s*(?:ssid|sidd|wifi\\s*name|network\\s*name|wifi\\s*id|name|id|ten\\s*wifi|tên\\s*wifi|ten\\s*mang|t[eê]n\\s*m[aạ]ng|ten\\s*wi-fi|tên\\s*wi-fi)\\s*[:：=-]\\s*(.+)$", Pattern.CASE_INSENSITIVE),
     )
 
     private val looseSsidValuePatterns = listOf(
-        Pattern.compile("^\\s*(?:ssid|wifi|wi-fi|network|wifi\\s*id|name|id|ten\\s*wifi|ten\\s*mang|ten\\s*wi-fi)\\s+(?![:ï¼=\\-]|password\\b|pass\\b|pwd\\b)(.+)$", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("^\\s*(?:ssid|sidd|wifi|wi-fi|network|wifi\\s*id|name|id|ten\\s*wifi|ten\\s*mang|ten\\s*wi-fi)\\s+(?![:ï¼=\\-]|password\\b|pass\\b|pwd\\b)(.+)$", Pattern.CASE_INSENSITIVE),
     )
 
     private val passwordValuePatterns = listOf(
@@ -656,7 +844,7 @@ internal object WifiOcrTextParser {
     )
 
     private val ssidLabelOnlyPatterns = listOf(
-        Pattern.compile("^\\s*(?:ssid|wifi\\s*name|network\\s*name|wifi\\s*id|name|id|ten\\s*wifi|tên\\s*wifi|ten\\s*mang|t[eê]n\\s*m[aạ]ng|ten\\s*wi-fi|tên\\s*wi-fi)\\s*[:：=-]?\\s*$", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("^\\s*(?:ssid|sidd|wifi\\s*name|network\\s*name|wifi\\s*id|name|id|ten\\s*wifi|tên\\s*wifi|ten\\s*mang|t[eê]n\\s*m[aạ]ng|ten\\s*wi-fi|tên\\s*wi-fi)\\s*[:：=-]?\\s*$", Pattern.CASE_INSENSITIVE),
     )
 
     private val passwordLabelOnlyPatterns = listOf(
@@ -669,7 +857,7 @@ internal object WifiOcrTextParser {
     )
 
     private val combinedInlineCredentialPattern = Pattern.compile(
-        "^\\s*(?:ssid|wifi\\s*name|network\\s*name|wifi\\s*id|name|id|ten\\s*wifi|tên\\s*wifi|ten\\s*mang|t[eê]n\\s*m[aạ]ng|ten\\s*wi-fi|tên\\s*wi-fi)\\s*[:：=-]\\s*(.+?)\\s*(?:\\||\\s{2,}|(?:password|pass\\s*word|pass\\s*wifi|wifi\\s*pass|wi-fi\\s*pass|pass|pwd|mat\\s*khau|m[aạ]t\\s*kh[aẩ]u|mk)\\s*[:：=-])\\s*(.+)$",
+        "^\\s*(?:ssid|sidd|wifi\\s*name|network\\s*name|wifi\\s*id|name|id|ten\\s*wifi|tên\\s*wifi|ten\\s*mang|t[eê]n\\s*m[aạ]ng|ten\\s*wi-fi|tên\\s*wi-fi)\\s*[:：=-]\\s*(.+?)\\s*(?:\\||\\s{2,}|(?:password|pass\\s*word|pass\\s*wifi|wifi\\s*pass|wi-fi\\s*pass|pass|pwd|mat\\s*khau|m[aạ]t\\s*kh[aẩ]u|mk)\\s*[:：=-])\\s*(.+)$",
         Pattern.CASE_INSENSITIVE,
     )
 
@@ -685,6 +873,11 @@ internal object WifiOcrTextParser {
         Pattern.compile("^([\\p{Alnum}@#\\$%\\^&._!\\-]+)\\s+(?:lap|lặp)\\s+(\\d{1,2})\\s*(?:lan|lần)$", Pattern.CASE_INSENSITIVE),
         Pattern.compile("^([\\p{Alnum}@#\\$%\\^&._!\\-]+)\\s*(?:x|×|\\*)\\s*(\\d{1,2})$", Pattern.CASE_INSENSITIVE),
     )
+    private val embeddedPasswordLabelPattern =
+        Regex("(?i)(?:^|[\\s|:：;,.\\-])(?:password|pass\\s*word|pass\\s*wifi|wifi\\s*pass|wi-fi\\s*pass|pass|pwd|mat\\s*khau|m[aạ]t\\s*kh[aẩ]u|mk)\\s*[:：=\\-]")
+    private val leadingOcrFieldMarkerPattern = Regex("(?i)^[a-z0-9]\\s*[:：]\\s+(.{3,})$")
+    private val credentialSeparatorPattern = Regex("\\s*[:：]\\s*")
+    private val digitLikePasswordTailPattern = Regex("[0-9OolI|ZzASsGgBqD]{2,}$")
 
     private const val minRepeatCount = 2
     private const val maxRepeatCount = 12

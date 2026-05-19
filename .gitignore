@@ -22,3 +22,7 @@ local.properties
 
 hs_err_pid*.log
 replay_pid*.log
+
+# Built APKs (release outputs go through CI/CD instead)
+SmartWiFi-Connect-final-debug.apk
+*.apk

@@ -127,10 +127,12 @@ fun ConnectionFailedScreen(
                     text = stringResource(R.string.connection_failed_brand_title),
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontSize = 22.sp,
+                    lineHeight = 25.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = FailBrand,
-                    maxLines = 1,
+                    maxLines = 2,
                 )
                 Spacer(modifier = Modifier.width(48.dp))
             }

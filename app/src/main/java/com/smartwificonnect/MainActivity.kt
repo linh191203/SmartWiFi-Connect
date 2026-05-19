@@ -46,6 +46,7 @@ import com.smartwificonnect.navigation.Routes
 import com.smartwificonnect.data.local.PolicyConsentManager
 import com.smartwificonnect.feature.home.PolicyConsentScreen
 import com.smartwificonnect.feature.share.SmartWifiSharePayloadCodec
+import com.smartwificonnect.ui.DisplayScaleGuard
 import com.smartwificonnect.ui.theme.SmartWifiAppTheme
 
 class MainActivity : ComponentActivity() {
@@ -55,6 +56,17 @@ class MainActivity : ComponentActivity() {
     // false only when Wi-Fi radio is completely OFF — being on but unconnected is fine
     private val wifiRadioOn = mutableStateOf(true)
     private val hasAcceptedPolicy = mutableStateOf(false)
+
+    /**
+     * Clamp font scale before any view inflation so layouts render as designed
+     * even when the user has set Settings → Display → Font size to maximum.
+     * Without this, tab labels truncate ("Trang chủ" → "Tran...") and buttons
+     * overflow on devices with high default font scaling (e.g. some Vivo,
+     * Samsung, Xiaomi setups).
+     */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(DisplayScaleGuard.wrap(newBase))
+    }
 
     private val appUpdateLauncher = registerForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()

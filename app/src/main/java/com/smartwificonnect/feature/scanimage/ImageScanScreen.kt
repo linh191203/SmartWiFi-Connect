@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,11 +46,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +63,9 @@ import androidx.compose.ui.unit.dp
 import com.smartwificonnect.feature.camera.CameraPreview
 import com.smartwificonnect.ui.theme.LocalAppDarkMode
 import com.smartwificonnect.ui.theme.SmartWifiAppTheme
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 private val ImageScanBackground: Color
     @Composable get() = if (LocalAppDarkMode.current) Color(0xFF10131B) else Color(0xFFF7F9FC)
@@ -99,6 +106,8 @@ fun ImageScanScreen(
     ocrLoadingMessage: String = "",
 ) {
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
+    var previewBounds by remember { mutableStateOf<Rect?>(null) }
+    var scanFrameBounds by remember { mutableStateOf<Rect?>(null) }
     val tabs = listOf(
         ImageScanBottomTab.HOME,
         ImageScanBottomTab.SCAN,
@@ -135,7 +144,8 @@ fun ImageScanScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .background(Color(0xFF565656)),
+                .background(Color(0xFF565656))
+                .onGloballyPositioned { previewBounds = it.boundsInRoot() },
         ) {
             CameraPreview(
                 modifier = Modifier.matchParentSize(),
@@ -152,17 +162,19 @@ fun ImageScanScreen(
                     .padding(horizontal = 20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Spacer(modifier = Modifier.height(92.dp))
+                Spacer(modifier = Modifier.weight(0.8f))
 
                 ImageScanFrame(
-                    modifier = Modifier.size(274.dp),
+                    modifier = Modifier
+                        .size(240.dp)
+                        .onGloballyPositioned { scanFrameBounds = it.boundsInRoot() },
                 )
 
-                Spacer(modifier = Modifier.height(40.dp))
+                Spacer(modifier = Modifier.weight(0.4f))
 
                 ImageScanHintPill()
 
-                Spacer(modifier = Modifier.height(62.dp))
+                Spacer(modifier = Modifier.weight(0.5f))
 
                 ImageScanActionBar(
                     enabled = !isOcrLoading,
@@ -173,13 +185,18 @@ fun ImageScanScreen(
                         if (bitmap == null) {
                             onCaptureUnavailable()
                         } else {
-                            onCaptureClick(bitmap)
+                            onCaptureClick(
+                                bitmap.cropToScanFrameOrSelf(
+                                    previewBounds = previewBounds,
+                                    scanFrameBounds = scanFrameBounds,
+                                ),
+                            )
                         }
                     },
                     onSwitchToQrClick = onSwitchToQrClick,
                 )
 
-                Spacer(modifier = Modifier.weight(1f))
+                Spacer(modifier = Modifier.weight(0.6f))
             }
 
             if (isOcrLoading) {
@@ -391,13 +408,51 @@ private fun ImageScanHintPill() {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Căn chỉnh mật khẩu Wi-Fi vào khung",
+                text = "Đặt tên Wi-Fi và mật khẩu vào trong khung",
                 color = Color(0xFFCED3DC),
                 style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
         }
     }
+}
+
+private fun Bitmap.cropToScanFrameOrSelf(
+    previewBounds: Rect?,
+    scanFrameBounds: Rect?,
+): Bitmap {
+    val previewRect = previewBounds ?: return this
+    val frameRect = scanFrameBounds ?: return this
+    if (previewRect.width <= 0f || previewRect.height <= 0f) return this
+
+    val visibleLeft = max(previewRect.left, frameRect.left)
+    val visibleTop = max(previewRect.top, frameRect.top)
+    val visibleRight = min(previewRect.right, frameRect.right)
+    val visibleBottom = min(previewRect.bottom, frameRect.bottom)
+    if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) return this
+
+    val paddingX = min((visibleRight - visibleLeft) * 0.08f, previewRect.width * 0.04f)
+    val paddingY = min((visibleBottom - visibleTop) * 0.10f, previewRect.height * 0.05f)
+
+    val cropLeft = ((visibleLeft - paddingX - previewRect.left) / previewRect.width * width)
+        .roundToInt()
+        .coerceIn(0, width - 1)
+    val cropTop = ((visibleTop - paddingY - previewRect.top) / previewRect.height * height)
+        .roundToInt()
+        .coerceIn(0, height - 1)
+    val cropRight = ((visibleRight + paddingX - previewRect.left) / previewRect.width * width)
+        .roundToInt()
+        .coerceIn(cropLeft + 1, width)
+    val cropBottom = ((visibleBottom + paddingY - previewRect.top) / previewRect.height * height)
+        .roundToInt()
+        .coerceIn(cropTop + 1, height)
+
+    val cropWidth = cropRight - cropLeft
+    val cropHeight = cropBottom - cropTop
+    if (cropWidth >= width && cropHeight >= height) return this
+    if (cropWidth <= 0 || cropHeight <= 0) return this
+
+    return Bitmap.createBitmap(this, cropLeft, cropTop, cropWidth, cropHeight)
 }
 
 @Composable
@@ -503,6 +558,7 @@ private fun ImageScanBottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,

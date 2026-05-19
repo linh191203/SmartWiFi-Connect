@@ -13,10 +13,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material3.Icon
@@ -77,13 +81,16 @@ fun CameraPermissionScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 24.dp, vertical = 36.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
             PermissionHero()
 
-            Spacer(modifier = Modifier.size(26.dp))
+            Spacer(modifier = Modifier.size(20.dp))
 
             Text(
                 text = "Quyền truy cập camera",
@@ -92,7 +99,7 @@ fun CameraPermissionScreen(
                 fontWeight = FontWeight.ExtraBold,
                 textAlign = TextAlign.Center,
             )
-            Spacer(modifier = Modifier.size(12.dp))
+            Spacer(modifier = Modifier.size(10.dp))
             Text(
                 text = "SmartWiFi-Connect cần quyền truy\ncập camera để quét mã QR.",
                 color = bodyColor,
@@ -101,7 +108,7 @@ fun CameraPermissionScreen(
                 textAlign = TextAlign.Center,
             )
 
-            Spacer(modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.size(16.dp))
 
             Surface(
                 shape = RoundedCornerShape(999.dp),
@@ -127,7 +134,7 @@ fun CameraPermissionScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.size(54.dp))
+            Spacer(modifier = Modifier.size(32.dp))
 
             Surface(
                 onClick = {
@@ -180,7 +187,7 @@ fun CameraPermissionScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.size(34.dp))
+            Spacer(modifier = Modifier.size(20.dp))
 
             Text(
                 text = "CÀI ĐẶT > QUYỀN TRUY CẬP > CAMERA",
@@ -195,36 +202,24 @@ fun CameraPermissionScreen(
 @Composable
 private fun PermissionHero() {
     Box(
-        modifier = Modifier.size(372.dp),
+        modifier = Modifier.size(180.dp),
         contentAlignment = Alignment.Center,
     ) {
         val ringBlue = Color(0xFF6470FF)
         Surface(
-            modifier = Modifier.size(372.dp),
+            modifier = Modifier.size(180.dp),
             shape = CircleShape,
             color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.06f)),
+            border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.08f)),
         ) {}
         Surface(
-            modifier = Modifier.size(344.dp),
+            modifier = Modifier.size(156.dp),
             shape = CircleShape,
             color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.09f)),
+            border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.12f)),
         ) {}
         Surface(
-            modifier = Modifier.size(320.dp),
-            shape = CircleShape,
-            color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.10f)),
-        ) {}
-        Surface(
-            modifier = Modifier.size(286.dp),
-            shape = CircleShape,
-            color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(2.dp, ringBlue.copy(alpha = 0.16f)),
-        ) {}
-        Surface(
-            modifier = Modifier.size(246.dp),
+            modifier = Modifier.size(130.dp),
             shape = CircleShape,
             color = Color(0xFFF8FAFC),
             shadowElevation = 0.dp,

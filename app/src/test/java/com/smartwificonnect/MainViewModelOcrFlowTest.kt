@@ -512,6 +512,7 @@ class MainViewModelOcrFlowTest {
         every { application.applicationContext } returns appContext
         every { appContext.applicationContext } returns appContext
         every { appContext.getSystemService(ConnectivityManager::class.java) } returns null
+        every { appContext.getSystemService(android.net.wifi.WifiManager::class.java) } returns null
 
         return MainViewModel(
             application = application,
